@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Automation Artifacts (הכי חשוב!)
+.pytest_cache/
+artifacts/
+zero_touch_logs/
+reports/
+*.xml
+*.html
+cascade_debug_link_form.png
+
+# Secrets
+.env
