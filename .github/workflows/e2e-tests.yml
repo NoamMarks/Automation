@@ -1,0 +1,154 @@
+name: E2E Tests
+
+# ----------------------------------------------------------------------
+# Triggers
+# ----------------------------------------------------------------------
+on:
+  # Manual run from the Actions tab — lets you tweak NUM_RUNS/TEST_PATH
+  workflow_dispatch:
+    inputs:
+      num_runs:
+        description: "How many times to run the suite end-to-end"
+        required: false
+        default: "1"
+      test_path:
+        description: "Pytest path or test file"
+        required: false
+        default: "./tests/"
+
+  # Daily scheduled run (06:00 UTC)
+  schedule:
+    - cron: "0 6 * * *"
+
+  # On every push to main (turn off if too noisy)
+  push:
+    branches: [main, master]
+
+
+# ----------------------------------------------------------------------
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   APP_URL          — base URL of the dev environment under test
+#   APP_USERNAME     — admin user
+#   APP_PASSWORD     — admin password
+#   MOD_USERNAME     — moderator user (currently broken — see test_mod_security)
+#   MOD_PASSWORD     — moderator password
+#
+#   EMAIL_USERNAME   — sender Gmail address (e.g. ci@yourdomain.com)
+#   EMAIL_PASSWORD   — Gmail App Password (NOT account password)
+#                       https://support.google.com/accounts/answer/185833
+#   EMAIL_TO         — comma-separated recipient list
+# ----------------------------------------------------------------------
+
+jobs:
+  e2e:
+    name: Run suite + email master report
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    # The actual project lives inside the `Automation-main/` subdirectory
+    # of this repo. Make every `run:` step execute there by default.
+    defaults:
+      run:
+        working-directory: Automation-main
+
+    steps:
+      # ---------- Checkout & Python ----------
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers + system deps
+        run: python -m playwright install --with-deps chromium
+
+      # ---------- Run the suite via the master script ----------
+      # NOTE: HEADLESS=1 forces our custom `page` fixture to run headless on
+      # the runner (no display). Pytest.ini's --headed flag is intended for
+      # pytest-playwright's own fixtures, which we don't use, so it's a
+      # harmless no-op here. continue-on-error keeps the job alive when
+      # tests fail so the email + artifact upload steps still run.
+      - name: Run multi-run suite
+        id: suite
+        env:
+          APP_URL:      ${{ secrets.APP_URL }}
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          MOD_USERNAME: ${{ secrets.MOD_USERNAME }}
+          MOD_PASSWORD: ${{ secrets.MOD_PASSWORD }}
+          NUM_RUNS:     ${{ github.event.inputs.num_runs || '1' }}
+          TEST_PATH:    ${{ github.event.inputs.test_path || './tests/' }}
+          HEADLESS:     "1"
+          PYTHONIOENCODING: "utf-8"
+        continue-on-error: true
+        run: python tests/run_multiple.py
+
+      # ---------- Build email digest from master report ----------
+      - name: Build email summary
+        id: email_summary
+        if: always()
+        env:
+          PYTHONIOENCODING: "utf-8"
+        run: python utils/email_summary.py
+
+      # ---------- Persist all reports as a workflow artifact ----------
+      - name: Upload reports + zero-touch logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-reports-run-${{ github.run_number }}
+          retention-days: 30
+          # `path:` on upload-artifact does NOT honor `defaults.run.working-directory`,
+          # so we have to qualify these with the subfolder prefix.
+          path: |
+            Automation-main/reports/master/
+            Automation-main/zero_touch_logs/
+
+      # ---------- Email the digest with attachments ----------
+      # Uses dawidd6/action-send-mail. `convert_markdown: true` turns the
+      # markdown body into proper HTML so any modern email client renders
+      # it correctly (Gmail, Outlook, Apple Mail, mobile).
+      - name: Email master report
+        if: always()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port:    587
+          secure:         false
+          username:       ${{ secrets.EMAIL_USERNAME }}
+          password:       ${{ secrets.EMAIL_PASSWORD }}
+          from:           "Zira E2E Bot <${{ secrets.EMAIL_USERNAME }}>"
+          to:             ${{ secrets.EMAIL_TO }}
+          subject: >-
+            [Zira E2E #${{ github.run_number }}]
+            ${{ steps.email_summary.outputs.status_emoji }}
+            ${{ steps.email_summary.outputs.pass }}/${{ steps.email_summary.outputs.total }}
+            passed
+            (${{ steps.email_summary.outputs.fail }} failed,
+             ${{ steps.email_summary.outputs.skip }} skipped,
+             ${{ steps.email_summary.outputs.err }} errors)
+          # `body` and `attachments` are resolved relative to the repo root,
+          # not the per-step working-directory — qualify with the subfolder.
+          body: file://Automation-main/reports/master/email_body.md
+          convert_markdown: true
+          attachments: |
+            Automation-main/reports/master/Master_Run_Report_*.md
+            Automation-main/reports/master/run_*_report.html
+            Automation-main/reports/master/run_*_junit.xml
+
+      # ---------- Surface the run status ----------
+      # If pytest exited non-zero (i.e. there were failures), fail the job
+      # AFTER artifacts and email have been delivered.
+      - name: Fail job if any tests failed
+        if: steps.suite.outcome != 'success'
+        run: |
+          echo "Suite finished with failures; see attached email and uploaded artifacts."
+          exit 1
