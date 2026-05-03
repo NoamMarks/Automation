@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"2\"; $env:TEST_PATH=\"tests/_zt_master_smoke.py\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"master_run_smoke2.txt\")",
-      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"2\"; $env:TEST_PATH=\"tests/_zt_master_smoke.py\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"master_run_smoke3.txt\")",
-      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"2\"; $env:TEST_PATH=\"tests/_zt_master_smoke.py\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"master_run_smoke4.txt\" | Select-Object -Last 25)"
-    ]
-  }
-}
