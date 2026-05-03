@@ -70,6 +70,34 @@ jobs:
       - name: Install Playwright browsers + system deps
         run: python -m playwright install --with-deps chromium
 
+      # ---------- Sanity-check that secrets actually arrived ----------
+      # Prints presence + length only — never the value. Empty secrets
+      # were the root cause of the previous run's 400-Bad-Request flood.
+      - name: Verify required secrets are populated
+        env:
+          APP_URL:      ${{ secrets.APP_URL }}
+          APP_USERNAME: ${{ secrets.APP_USERNAME }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          MOD_USERNAME: ${{ secrets.MOD_USERNAME }}
+          MOD_PASSWORD: ${{ secrets.MOD_PASSWORD }}
+        run: |
+          missing=0
+          for var in APP_URL APP_USERNAME APP_PASSWORD MOD_USERNAME MOD_PASSWORD; do
+            value="${!var}"
+            if [ -z "$value" ]; then
+              echo "  ❌ $var: EMPTY (secret missing or mistyped)"
+              missing=$((missing + 1))
+            else
+              echo "  ✅ $var: set (${#value} chars)"
+            fi
+          done
+          if [ $missing -gt 0 ]; then
+            echo ""
+            echo "ABORTING: $missing required secret(s) are empty."
+            echo "Fix: Settings → Secrets and variables → Actions → check names match exactly."
+            exit 1
+          fi
+
       # ---------- Run the suite via the master script ----------
       # NOTE: HEADLESS=1 forces our custom `page` fixture to run headless on
       # the runner (no display). Pytest.ini's --headed flag is intended for
