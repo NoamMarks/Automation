@@ -61,6 +61,7 @@ def build_summary(md_path):
         content = f.read()
 
     summary  = extract_section(content, "Summary")
+    analysis = extract_section(content, "Failure Analysis")
     stab     = extract_section(content, "Stability Index — Tests with Failures")
     skipped  = extract_section(content, "Skipped Tests")
     totals   = parse_totals(content) or {}
@@ -83,12 +84,21 @@ def build_summary(md_path):
         out.append(summary)
         out.append("")
 
+    # Failure Analysis is the actionable triage section — surface it first
+    # so the email reader sees the root-cause pattern without scrolling.
+    if analysis:
+        out.append("## Failure Analysis")
+        out.append("")
+        if len(analysis) > 3500:
+            analysis = analysis[:3500] + "\n\n*(truncated — see attached master report)*"
+        out.append(analysis)
+        out.append("")
+
     if stab:
         out.append("## Stability Index — Tests with Failures")
         out.append("")
-        # Cap stability section so emails stay readable when many tests flake.
-        if len(stab) > 4000:
-            stab = stab[:4000] + "\n\n*(truncated — see attached master report)*"
+        if len(stab) > 2500:
+            stab = stab[:2500] + "\n\n*(truncated — see attached master report)*"
         out.append(stab)
         out.append("")
 

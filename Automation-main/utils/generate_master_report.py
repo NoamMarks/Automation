@@ -117,6 +117,63 @@ def _rel(target, from_path):
 
 
 # ============================================================
+# Failure-pattern bucketing  (Surfacing root cause when many tests fail)
+# ============================================================
+
+_KNOWN_ERROR_TYPES = (
+    "TimeoutError", "AssertionError", "NameError", "ValueError", "TypeError",
+    "AttributeError", "KeyError", "IndexError", "FileNotFoundError",
+    "ConnectionError", "PermissionError", "RuntimeError",
+)
+
+
+def _error_key(msg):
+    """Reduce a failure_message string to a short bucket key like 'TimeoutError'.
+    When multiple tests fail with the same exception type, they share a key."""
+    if not msg:
+        return "<no message>"
+    line = msg.strip().splitlines()[0]
+    m = re.search(r"([A-Z]\w*(?:Error|Exception))", line)
+    if m:
+        return m.group(1)
+    for k in _KNOWN_ERROR_TYPES:
+        if k in line:
+            return k
+    return line[:60]
+
+
+def _build_failure_analysis(parsed):
+    """Bucket failures across all runs by exception type AND by test class.
+
+    Returns:
+        error_buckets   {error_type: [{test, run, msg}, ...]}
+        class_failures  {class_name: failure_count}
+        class_totals    {class_name: total_test_count}
+    """
+    error_buckets = defaultdict(list)
+    class_failures = defaultdict(int)
+    class_totals = defaultdict(int)
+
+    for run, data in parsed:
+        if data is None:
+            continue
+        for tc in data["testcases"]:
+            cls_name = tc["classname"].split(".")[-1] or "<unknown>"
+            class_totals[cls_name] += 1
+            if tc["failed"]:
+                class_failures[cls_name] += 1
+                key = _error_key(tc["failure_message"])
+                first_line = (tc["failure_message"] or "").strip().splitlines()
+                sample = first_line[0][:160] if first_line else ""
+                error_buckets[key].append({
+                    "test": f"{cls_name}::{tc['name']}",
+                    "run":  run["run_idx"],
+                    "msg":  sample,
+                })
+    return error_buckets, class_failures, class_totals
+
+
+# ============================================================
 # Master-report builder
 # ============================================================
 
@@ -191,6 +248,53 @@ def generate_master_report(runs, output_path, errors_dir="zero_touch_logs/errors
                    f"{totals['pass']} / {totals['tests']} = **{rate:.1f}%**")
         out.append("")
 
+    # ---------- Failure Analysis (root-cause pattern surfacing) ----------
+    error_buckets, class_failures, class_totals = _build_failure_analysis(parsed)
+
+    if error_buckets:
+        out.append("## Failure Analysis")
+        out.append("")
+        out.append("Groups failures across all runs by exception type. When many tests "
+                   "fail with the same exception, the root cause is usually upstream "
+                   "(a broken fixture, login, or shared infra) — fix that one thing and "
+                   "the bucket goes green.")
+        out.append("")
+
+        # Top error types
+        sorted_errors = sorted(error_buckets.items(), key=lambda kv: -len(kv[1]))
+        out.append("### Most common error patterns")
+        out.append("")
+        out.append("| Exception | Failures | Sample message |")
+        out.append("|---|---:|---|")
+        for err_key, hits in sorted_errors[:6]:
+            sample = (hits[0]["msg"] if hits else "").replace("|", "\\|")[:120]
+            out.append(f"| `{err_key}` | {len(hits)} | `{sample}` |")
+        if len(sorted_errors) > 6:
+            other_count = sum(len(v) for _, v in sorted_errors[6:])
+            out.append(f"| _… {len(sorted_errors) - 6} other exception type(s)_ | {other_count} | |")
+        out.append("")
+
+        # Class-wide failure detection
+        big_class_failures = []
+        for cls, fail_count in class_failures.items():
+            total = class_totals[cls]
+            if total >= 2 and fail_count / total >= 0.8:
+                big_class_failures.append((cls, fail_count, total))
+
+        if big_class_failures:
+            out.append("### Class-wide failures (≥80% of tests in the class failed)")
+            out.append("")
+            out.append("This pattern almost always means a class-scoped fixture, the "
+                       "first `test_01_login` step, or a shared setup is failing — every "
+                       "subsequent test in the class then cascades.")
+            out.append("")
+            out.append("| Test class | Failed | Total | Rate |")
+            out.append("|---|---:|---:|---:|")
+            for cls, fail, total in sorted(big_class_failures, key=lambda t: -t[1]):
+                pct = int(100 * fail / total)
+                out.append(f"| `{cls}` | {fail} | {total} | {pct}% |")
+            out.append("")
+
     # ---------- Stability index ----------
     failed_in_runs = defaultdict(list)
     skipped_in_runs = defaultdict(list)
@@ -207,15 +311,21 @@ def generate_master_report(runs, output_path, errors_dir="zero_touch_logs/errors
     if failed_in_runs:
         out.append("## Stability Index — Tests with Failures")
         out.append("")
-        out.append("Tests that failed in one or more runs (regression / flake candidates):")
+        out.append("Tests that failed in one or more runs (regression / flake candidates). "
+                   "Sorted by failure rate × name; capped to top 10 below — full list is "
+                   "in the attached per-run JUnit XML.")
         out.append("")
         out.append("| Test | Failed in runs | Failure rate |")
         out.append("|---|---|---:|")
         sorted_fails = sorted(failed_in_runs.items(),
                               key=lambda x: (-len(x[1]), x[0]))
-        for tid, idxs in sorted_fails:
+        SHOW_STAB = 10
+        for tid, idxs in sorted_fails[:SHOW_STAB]:
             rate = f"{len(idxs)} / {len(runs)}"
             out.append(f"| `{tid}` | {idxs} | {rate} |")
+        if len(sorted_fails) > SHOW_STAB:
+            out.append(f"| _… and **{len(sorted_fails) - SHOW_STAB}** more failed tests_ "
+                       f"| _(see attached JUnit)_ | |")
         out.append("")
 
     if skipped_in_runs:
@@ -274,7 +384,15 @@ def generate_master_report(runs, output_path, errors_dir="zero_touch_logs/errors
 
         run_arts = _find_artifacts_for_run(errors_dir, run["start"], run["end"])
 
-        for tc in failures:
+        # Cap how many failures we show in detail. The full list lives in the
+        # attached per-run HTML/junit; the master report stays scannable.
+        SHOW_FAILS_DETAIL = 5
+        if len(failures) > SHOW_FAILS_DETAIL:
+            out.append(f"*Showing first {SHOW_FAILS_DETAIL} of {len(failures)} failures "
+                       f"in detail. Full list in attached `run_{run['run_idx']}_report.html`.*")
+            out.append("")
+
+        for tc in failures[:SHOW_FAILS_DETAIL]:
             test_name = tc["name"]
             cls_name = tc["classname"].split(".")[-1]
             full_id = f"{cls_name}::{test_name}"
