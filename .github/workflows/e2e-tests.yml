@@ -4,7 +4,11 @@ name: E2E Tests
 # Triggers
 # ----------------------------------------------------------------------
 on:
-  # Manual run from the Actions tab — lets you tweak NUM_RUNS/TEST_PATH
+  # Manual run from the Actions tab — lets you tweak NUM_RUNS/TEST_PATH.
+  # NOTE (temporary, while debugging the CI 400-Bad-Request issue):
+  # default test_path is a single small file so push-triggered runs finish
+  # in ~2 min and the email digest's Failure Analysis surfaces the auth
+  # failure pattern fast. Revert to './tests/' once CI is green.
   workflow_dispatch:
     inputs:
       num_runs:
@@ -14,7 +18,7 @@ on:
       test_path:
         description: "Pytest path or test file"
         required: false
-        default: "./tests/"
+        default: "tests/test_admin_grid_controls.py"
 
   # Daily scheduled run (06:00 UTC)
   schedule:
@@ -113,7 +117,9 @@ jobs:
           MOD_USERNAME: ${{ secrets.MOD_USERNAME }}
           MOD_PASSWORD: ${{ secrets.MOD_PASSWORD }}
           NUM_RUNS:     ${{ github.event.inputs.num_runs || '1' }}
-          TEST_PATH:    ${{ github.event.inputs.test_path || './tests/' }}
+          # Push & schedule triggers also use the focused single file while
+          # we investigate the CI 400 — change back to './tests/' once green.
+          TEST_PATH:    ${{ github.event.inputs.test_path || 'tests/test_admin_grid_controls.py' }}
           HEADLESS:     "1"
           PYTHONIOENCODING: "utf-8"
         continue-on-error: true
