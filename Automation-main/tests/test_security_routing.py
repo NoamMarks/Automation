@@ -1,9 +1,24 @@
 """
-Permission-boundary tests via direct URL manipulation.
+DISABLED — no working moderator account right now.
 
-`test_mod_security` verifies that admin-only buttons are visually hidden
-from a moderator. That is UX-level, not authorization-level — a user
-with knowledge of the admin URLs could still reach those routes.
+These tests need a real moderator login (`ZiraMod` / `123123`) to be
+meaningful. Today the login attempt never completes — the post-login
+URL stays on the Azure B2C authorize endpoint — so the existing sanity
+check passes vacuously (a logged-out user has no admin buttons either,
+which is the same observation as a properly-restricted moderator).
+The code is intentionally kept intact for revival.
+
+Pytest will not collect this class while the class name starts with
+an underscore (default `python_classes = Test*`).
+
+To re-enable when a moderator account is available:
+  1. Confirm credentials in `.env` (MOD_USERNAME / MOD_PASSWORD)
+  2. Rename `_TestSecurityRouting_DISABLED` → `TestSecurityRouting`
+  3. Tighten the sanity check so a logged-out user can't satisfy it
+     (e.g. assert a moderator-specific element is visible).
+
+----------------------------------------------------------------------
+Permission-boundary tests via direct URL manipulation.
 
 This file exercises the real authorization boundary: log in as a
 moderator, force-navigate to admin-only URLs (Environments and Domains/
@@ -95,11 +110,23 @@ def sec_data():
     return {}
 
 
-class TestSecurityRouting:
+class _TestSecurityRouting_DISABLED:
     """Direct-URL authorization boundary tests for the moderator role."""
 
     def test_01_login_as_moderator(self, page, sec_data):
         print("\n[sec] logging in as moderator...")
+        # The session-scoped admin login (conftest's _auth_state_path) preloads
+        # admin cookies + localStorage into every `page` context. Moderator
+        # login needs a clean slate — discard the admin state first.
+        try:
+            page.context.clear_cookies()
+            page.evaluate(
+                "() => { try { localStorage.clear(); sessionStorage.clear(); } catch(e) {} }"
+            )
+            print("[sec] discarded preloaded admin auth state for fresh mod login")
+        except Exception as e:
+            print(f"[sec] state-clear non-fatal error: {type(e).__name__}: {e}")
+
         _login_as_moderator(page)
         post_login_url = page.url
         print(f"[sec] post-login URL: {post_login_url}")

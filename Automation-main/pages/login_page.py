@@ -26,18 +26,40 @@ class LoginPage:
         """Navigate to the login page."""
         self.page.goto(self.URL)
 
+    def _is_already_logged_in(self, wait_ms=1500):
+        """Idempotency guard for storage-state preloaded contexts.
+
+        When `tests/conftest.py`'s session-scoped fixture has populated
+        the browser context with admin cookies + localStorage, the page
+        renders the post-login welcome text immediately. In that case we
+        must NOT click the (now-hidden) 'התחבר' link — we just short-circuit.
+        """
+        try:
+            self.page.get_by_text("שלום מנהלן ראשי").first.wait_for(
+                state="visible", timeout=wait_ms
+            )
+            return True
+        except Exception:
+            return False
+
     def fill_credentials(self):
-        """Click the login link and fill username + password on the B2C form."""
+        """Click the login link and fill username + password on the B2C form.
+        No-op if the page already shows admin auth (preloaded storage_state)."""
+        if self._is_already_logged_in():
+            return
         self._login_link.click()
-        
+
         # Wait for the B2C form to load by waiting for the username input
         self.page.locator("#pretty-username").wait_for(state="visible", timeout=15000)
-        
+
         self.page.locator("#pretty-username").fill(os.getenv("APP_USERNAME"))
         self.page.locator("#pretty-password").fill(os.getenv("APP_PASSWORD"))
 
     def click_login(self):
-        """Click the login button on the B2C form."""
+        """Click the login button on the B2C form.
+        No-op if already authenticated."""
+        if self._is_already_logged_in():
+            return
         self.page.locator("button.button-submit").click()
 
     def wait_for_dashboard(self, timeout=15000):

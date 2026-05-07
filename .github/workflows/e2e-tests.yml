@@ -46,7 +46,10 @@ on:
 jobs:
   e2e:
     name: Run suite + email master report
-    runs-on: ubuntu-latest
+    # Self-hosted runner inside the Israeli network — required because the
+    # dev environment geo-blocks non-Israeli IPs at the auth layer. See
+    # .github/CI_SETUP.md for runner registration instructions.
+    runs-on: [self-hosted, israel]
     timeout-minutes: 60
 
     # The actual project lives inside the `Automation-main/` subdirectory
@@ -71,13 +74,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Playwright browsers + system deps
-        run: python -m playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        # `--with-deps` would invoke sudo on Linux (and prompt-hang in CI),
+        # so we omit it. On a self-hosted runner you pre-install OS deps
+        # once with `python -m playwright install --with-deps chromium`
+        # from a logged-in shell. After that this step is a fast no-op.
+        run: python -m playwright install chromium
 
       # ---------- Sanity-check that secrets actually arrived ----------
       # Prints presence + length only — never the value. Empty secrets
       # were the root cause of the previous run's 400-Bad-Request flood.
       - name: Verify required secrets are populated
+        # Bash syntax (`${!var}`, `for ... do`) — pin shell so this works on
+        # Windows self-hosted runners where the default shell is PowerShell.
+        # Git Bash ships with the GitHub Actions runner installer.
+        shell: bash
         env:
           APP_URL:      ${{ secrets.APP_URL }}
           APP_USERNAME: ${{ secrets.APP_USERNAME }}

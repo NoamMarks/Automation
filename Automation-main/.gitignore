@@ -19,3 +19,8 @@ cascade_debug_link_form.png
 
 # Secrets
 .env
+
+# Auth state captured by the session-scoped login fixture — contains
+# session cookies for the admin user. Lives in pytest's tmp dir by
+# default, but pin a defensive ignore in case anyone redirects it here.
+auth_state.json

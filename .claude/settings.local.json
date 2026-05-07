@@ -1,7 +1,36 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"1\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"local_dry_run_v2.txt\")"
+      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"1\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"local_dry_run_v2.txt\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"1\"; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"local_storage_state_run.txt\")",
+      "PowerShell(Set-Location \"c:\\\\Users\\\\Admin\\\\Downloads\\\\Automation-main\\\\Automation-main\"; $env:NUM_RUNS=\"1\"; Remove-Item env:HEADLESS -ErrorAction SilentlyContinue; & \".\\\\.venv\\\\Scripts\\\\python.exe\" tests\\\\run_multiple.py 2>&1 | Tee-Object -FilePath \"headed_storage_state_run.txt\")",
+      "Bash(python tests/run_multiple.py)",
+      "Bash(tee reports/master/_run_multiple.log)",
+      "Bash(python -m pip install Pillow==12.2.0)",
+      "Bash(python -c \"from PIL import Image; print\\('Pillow OK'\\)\")",
+      "Bash(python -m pytest --collect-only ./tests/)",
+      "Bash(python \"c:/tmp/zira_discovery/repro_env_500_v2.py\")",
+      "Bash(python \"c:/tmp/zira_discovery/check_env_orphans.py\")",
+      "Bash(ls -la)",
+      "Bash(ls -la Automation-main/)",
+      "Bash(python -c \"import sys; print\\('Active interpreter:', sys.executable\\)\")",
+      "Bash(ls venv/Scripts/python.exe)",
+      "Bash(ls .venv/Scripts/python.exe)",
+      "Bash(cat venv/pyvenv.cfg)",
+      "Bash(cat .venv/pyvenv.cfg)",
+      "Bash(python -m pytest --collect-only -q ./tests/)",
+      "Bash(python -c \"from utils.generate_master_report import generate_master_report; from utils.generate_simple_summary import generate_simple_summary; from utils.cleanup_orphans import *; print\\('all imports OK'\\)\")",
+      "Bash(NUM_RUNS=1 python tests/run_multiple.py)",
+      "Bash(python \"c:/tmp/zira_discovery/investigate_env_propagation.py\")",
+      "Bash(tee \"c:/tmp/zira_discovery/_propagation_run.log\")",
+      "Bash(python \"c:/tmp/zira_discovery/investigate_env_propagation_v2.py\")",
+      "Bash(tee \"c:/tmp/zira_discovery/_propagation_v2.log\")",
+      "Bash(python \"c:/tmp/zira_discovery/analyze_existing_propagation.py\")",
+      "Bash(tee \"c:/tmp/zira_discovery/_analyze.log\")",
+      "Bash(python \"c:/tmp/zira_discovery/classify_links_by_status.py\")",
+      "Bash(python \"c:/tmp/zira_discovery/dig_deeper.py\")",
+      "Bash(tee \"c:/tmp/zira_discovery/_dig.log\")",
+      "Bash(tee \"c:/tmp/zira_discovery/_dig_recheck.log\")"
     ]
   }
 }

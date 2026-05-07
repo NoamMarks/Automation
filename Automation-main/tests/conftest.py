@@ -58,10 +58,67 @@ def pytest_runtest_makereport(item, call):
 
 
 # ==========================================
-# 3. Playwright Browser Fixture (class-scoped)
+# 3a. Session-scoped admin login → saved storage_state
+# ==========================================
+@pytest.fixture(scope="session")
+def _auth_state_path(tmp_path_factory):
+    """Log in as admin ONCE per pytest session and persist the resulting
+    cookies + localStorage to a JSON file. Each class-scoped `page` fixture
+    then loads that file as its initial storage_state, so every browser
+    context starts already authenticated. Cuts per-suite admin logins
+    from ~13 (one per test class) to 1 — important for B2C rate limits
+    and just plain faster locally.
+
+    Failure-safe: if the session-level login fails for any reason, returns
+    an empty path. The class fixture detects an empty/missing path and
+    falls back to per-class login (the original behavior).
+    """
+    headless = os.getenv("HEADLESS", "0") == "1"
+    state_path = tmp_path_factory.mktemp("auth") / "auth_state.json"
+    app_url = os.getenv("APP_URL", "https://front-zira.dev.orangepeak.net/")
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=headless, slow_mo=100 if headless else 300
+            )
+            context = browser.new_context()
+            page = context.new_page()
+            page.goto(app_url)
+            try:
+                page.get_by_role("button", name="הבנתי").click(timeout=3000)
+            except Exception:
+                pass
+
+            # Avoid circular import: imported here, not at module top
+            from pages.login_page import LoginPage
+            login = LoginPage(page)
+            login.fill_credentials()
+            login.click_login()
+            # Wait for the post-login welcome text to confirm auth landed.
+            # We do NOT call wait_for_dashboard() here because that does
+            # menu-navigation we don't need for state capture.
+            page.get_by_text("שלום מנהלן ראשי").first.wait_for(
+                state="visible", timeout=20000
+            )
+
+            context.storage_state(path=str(state_path))
+            print(f"\n[auth] session login OK; storage_state saved → {state_path}")
+
+            context.close()
+            browser.close()
+        return str(state_path)
+    except Exception as e:
+        print(f"\n[auth] WARNING: session-level login failed "
+              f"({type(e).__name__}: {e}). Tests will fall back to per-class login.")
+        return ""
+
+
+# ==========================================
+# 3b. Playwright Browser Fixture (class-scoped)
 # ==========================================
 @pytest.fixture(scope="class")
-def page(request):
+def page(request, _auth_state_path):
     headless = os.getenv("HEADLESS", "0") == "1"
     record_video = os.getenv("RECORD_VIDEO", "0") == "1"
 
@@ -69,6 +126,12 @@ def page(request):
         browser = p.chromium.launch(headless=headless, slow_mo=100 if headless else 500)
 
         ctx_kwargs = {}
+        # Preload the session-scoped admin auth so the test class starts
+        # already logged in. If the session fixture failed, _auth_state_path
+        # is empty and we fall through to per-class login.
+        if _auth_state_path and os.path.exists(_auth_state_path):
+            ctx_kwargs["storage_state"] = _auth_state_path
+
         video_dir = None
         if record_video:
             video_dir = os.path.join(os.getcwd(), "artifacts", "videos")

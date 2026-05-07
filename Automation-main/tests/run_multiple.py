@@ -35,7 +35,17 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_HERE)
 sys.path.insert(0, _PROJECT_ROOT)
 
+# Load .env from project root so EMAIL_FROM/PASS/TO are visible to
+# send_run_email(). pytest's conftest already loads .env for the test
+# process, but this outer script runs in its own process and needs it
+# loaded explicitly.
+from dotenv import load_dotenv  # noqa: E402
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
+
 from utils.generate_master_report import generate_master_report  # noqa: E402
+from utils.generate_simple_summary import generate_simple_summary  # noqa: E402
+from utils.generate_html_dashboard import generate_html_dashboard  # noqa: E402
+from utils.send_email import send_run_email  # noqa: E402
 
 
 # ============================================================
@@ -125,25 +135,43 @@ def main():
               f"completed run(s)")
         print("!" * 72)
 
-    # ---- Master report ----
+    # ---- Reports ----
     suite_end = datetime.now()
     timestamp = suite_end.strftime("%Y%m%d_%H%M%S")
     master_path = os.path.join(MASTER_REPORTS_DIR, f"Master_Run_Report_{timestamp}.md")
+    summary_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Summary_{timestamp}.md")
+    dashboard_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Dashboard_{timestamp}.html")
 
     print()
     print("=" * 72)
-    print("GENERATING MASTER REPORT")
+    print("GENERATING REPORTS")
     print("=" * 72)
-    written = generate_master_report(runs, master_path)
+    written_master = generate_master_report(runs, master_path)
+    written_summary = generate_simple_summary(runs, summary_path)
+    written_dashboard = generate_html_dashboard(runs, dashboard_path)
 
     total_dur = (suite_end - suite_start).total_seconds()
     nonzero = sum(1 for r in runs if r["exit_code"] != 0)
     print()
     print(f"Suite finished in {total_dur:.1f}s.")
     print(f"Runs with non-zero exit code: {nonzero}/{len(runs)}")
-    print(f"Master report:  {written}")
-    if os.path.exists(written):
-        print(f"   size:        {os.path.getsize(written):,} bytes")
+    print(f"Plain summary:  {written_summary}  (start here — readable by anyone)")
+    print(f"HTML dashboard: {written_dashboard}  (open in browser — charts + metrics)")
+    print(f"Master report:  {written_master}  (deep diagnostics)")
+    if os.path.exists(written_master):
+        print(f"   master size: {os.path.getsize(written_master):,} bytes")
+
+    # ---- Post-run email (no-op unless EMAIL_FROM/PASS/TO are set in .env) ----
+    print()
+    print("=" * 72)
+    print("POST-RUN EMAIL")
+    print("=" * 72)
+    send_run_email(
+        runs,
+        summary_path=written_summary,
+        dashboard_path=written_dashboard,
+        master_path=written_master,
+    )
 
 
 if __name__ == "__main__":
