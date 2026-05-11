@@ -23,6 +23,7 @@ a test crashes mid-flight.
 """
 
 import os
+import re
 import uuid
 
 import pytest
@@ -127,11 +128,24 @@ class TestKnownRegressions:
     # BUG-2: preview popup shows inactive messages
     # ----------------------------------------------------------
     def test_bug_02_preview_hides_inactive_messages(self, page):
-        """BUG-2: The admin 'תצוגה מקדימה פופ אפ' (preview popup) lists
-        inactive messages alongside active ones.
+        """BUG-2: The admin 'תצוגה מקדימה פופ אפ' (preview popup) should
+        only list ACTIVE messages — inactive ones must be hidden, just
+        like end users see on the public site.
 
-        Repro: create one active and one inactive message; open the
-        preview popup; the popup should contain ONLY the active one.
+        UI-based check using the popup's own pagination indicator.
+        The popup header shows '(N / 1)' where N is the total number
+        of messages in the carousel. By reading that count before and
+        after creating each test message, we can verify the active
+        bumps the count by 1 and the inactive doesn't bump it at all.
+
+        Repro:
+          1. Read the popup's baseline total count (N_before)
+          2. Create a new ACTIVE message with type='both' (so it qualifies
+             for the popup) → re-open popup, read N_active.
+             Expect N_active == N_before + 1.
+          3. Create a new INACTIVE message with type='both' → re-open popup,
+             read N_inactive.
+             Expect N_inactive == N_active (inactive must NOT increment).
         """
         suffix = _short_id()
         active_name = f"RegBug2Active{suffix}"
@@ -141,44 +155,51 @@ class TestKnownRegressions:
         page.wait_for_timeout(1500)
         msgs = MessagesPage(page)
 
-        print(f"\n[reg/bug-02] creating active message {active_name!r}")
+        def _read_popup_count():
+            """Open the preview popup, parse its '(N / 1)' indicator,
+            close the popup, return N (or None if unreadable)."""
+            msgs.click_preview()
+            page.wait_for_timeout(2500)
+            wrap = page.locator(
+                "[class*='WelcomeModalstyled__WelcomeModalWrapper']"
+            ).first
+            text = wrap.inner_text() if wrap.count() else ""
+            # Close popup so we can keep working with the page
+            for label in ("הבנתי", "אישור"):
+                try:
+                    btn = page.get_by_role("button", name=label).first
+                    if btn.count() > 0 and btn.is_visible():
+                        btn.click(timeout=2000)
+                        page.wait_for_timeout(500)
+                        break
+                except Exception:
+                    continue
+            m = re.search(r"\((\d+)\s*/\s*\d+\)", text)
+            return int(m.group(1)) if m else None
+
+        # Baseline
+        n_before = _read_popup_count()
+        print(f"\n[reg/bug-02] popup baseline count: {n_before}")
+
+        # Create active message with type='both' so it appears in popup
+        print(f"[reg/bug-02] creating ACTIVE {active_name!r} (type='both')")
         msgs.create_message(active_name, "regression-test active message")
-        # Default status is active — leave the switch alone.
+        msgs.select_type("both")
         msgs.click_save_and_confirm()
         page.wait_for_timeout(1500)
+        n_active = _read_popup_count()
+        print(f"[reg/bug-02] popup count after active: {n_active}")
 
-        print(f"[reg/bug-02] creating INACTIVE message {inactive_name!r}")
+        # Create inactive message with type='both' (so it WOULD qualify
+        # if the popup didn't filter inactive — that's the check)
+        print(f"[reg/bug-02] creating INACTIVE {inactive_name!r} (type='both')")
         msgs.create_message(inactive_name, "regression-test inactive message")
-        # Toggle status off so it's saved as inactive.
+        msgs.select_type("both")
         msgs.toggle_status()
         msgs.click_save_and_confirm()
         page.wait_for_timeout(1500)
-
-        # Open the admin preview popup
-        print(f"[reg/bug-02] opening preview popup")
-        msgs.click_preview()
-        page.wait_for_timeout(2000)
-
-        # Read every visible message-name node inside the open popup. We
-        # capture the page's full visible text and check by substring,
-        # which sidesteps depending on the popup's exact DOM structure.
-        body_text = page.locator("body").inner_text()
-
-        active_present = active_name in body_text
-        inactive_present = inactive_name in body_text
-        print(f"[reg/bug-02] active visible in popup  : {active_present}")
-        print(f"[reg/bug-02] inactive visible in popup: {inactive_present}")
-
-        # Try to close the popup before asserting / cleaning up
-        for label in ("הבנתי", "אישור"):
-            try:
-                btn = page.get_by_role("button", name=label).first
-                if btn.count() > 0 and btn.is_visible():
-                    btn.click(timeout=2000)
-                    page.wait_for_timeout(500)
-                    break
-            except Exception:
-                continue
+        n_inactive = _read_popup_count()
+        print(f"[reg/bug-02] popup count after inactive: {n_inactive}")
 
         # Cleanup BEFORE assertion so test data is removed even on fail
         for name in (active_name, inactive_name):
@@ -191,13 +212,20 @@ class TestKnownRegressions:
                       f"(non-fatal): {type(e).__name__}: {e}")
 
         # Assertions
-        assert active_present, (
-            f"Active message {active_name!r} should be visible in the "
-            f"preview popup but was not."
+        assert n_before is not None, (
+            "Could not parse '(N / 1)' indicator from the baseline "
+            "popup — popup may not be open, or its layout changed."
         )
-        assert not inactive_present, (
-            f"BUG-2: inactive message {inactive_name!r} appears in the "
-            f"preview popup but should be hidden."
+        assert n_active == n_before + 1, (
+            f"Active message did not increment popup count as expected: "
+            f"baseline={n_before}, after active create={n_active}. "
+            f"Either the create flow didn't add the message, the message "
+            f"type was wrong, or the popup is not refreshing."
+        )
+        assert n_inactive == n_active, (
+            f"BUG-2: creating an INACTIVE message incremented the popup "
+            f"count from {n_active} to {n_inactive}. Inactive messages "
+            f"must NOT appear in the preview popup."
         )
 
     # ----------------------------------------------------------
@@ -247,7 +275,10 @@ class TestKnownRegressions:
         dialog_text = ""
         if dialog.count() > 0 and dialog.is_visible():
             dialog_text = dialog.inner_text()
-        new_env_present = env_name in dialog_text
+        # The dialog renders env names with `text-transform: uppercase`,
+        # so we compare case-insensitively (the original-case name is
+        # also still in the DOM, but inner_text reflects the visible CSS).
+        new_env_present = env_name.lower() in dialog_text.lower()
         print(f"[reg/bug-03] {env_name!r} listed in env-switcher dialog: "
               f"{new_env_present}")
 

@@ -62,18 +62,54 @@ class LoginPage:
             return
         self.page.locator("button.button-submit").click()
 
-    def wait_for_dashboard(self, timeout=15000):
-        """Wait until the dashboard is loaded and click into settings."""
-        # Wait for the user profile text to appear to confirm we are logged in
+    def wait_for_dashboard(self, timeout=15000, attempts=3):
+        """Wait until the dashboard is loaded and click into settings.
+
+        The 'enter admin' transition is a 2-click sequence: click the
+        user-profile, then click the menu item that opens. A frontend
+        re-render between those clicks (observed when an SSE connection
+        drops mid-test, see UI bug "menu auto-closes on SSE error")
+        can flicker the menu shut before the second click lands.
+
+        We retry the whole sequence a few times with short per-step
+        timeouts. The final post-login wait keeps the full timeout
+        budget so success-path latency isn't affected.
+        """
         user_profile = self.page.get_by_text("שלום מנהלן ראשי")
         user_profile.wait_for(state="visible", timeout=timeout)
-        
-        # Make the two moves to get into settings
-        user_profile.click()
-        self.page.get_by_role("menu").click()
-        
-        # Wait for the 'Content Worlds' button to appear to confirm settings loaded
-        self._post_login_indicator.wait_for(state="visible", timeout=timeout)
+
+        last_err = None
+        for attempt in range(1, attempts + 1):
+            try:
+                user_profile.click()
+                # Wait for the menu to actually open AND stabilize before
+                # clicking it — animation + re-render races are the
+                # specific failure mode this guards against.
+                menu = self.page.get_by_role("menu")
+                menu.wait_for(state="visible", timeout=4000)
+                # Tiny settle so a mid-animation re-render doesn't swallow
+                # the click; cheaper than a stability poll.
+                self.page.wait_for_timeout(200)
+                menu.click(timeout=4000)
+                # Confirm we landed in the admin context
+                self._post_login_indicator.wait_for(
+                    state="visible", timeout=timeout
+                )
+                return
+            except Exception as e:
+                last_err = e
+                if attempt == attempts:
+                    break
+                print(f"[login] wait_for_dashboard attempt {attempt}/{attempts} "
+                      f"failed ({type(e).__name__}); retrying after settle")
+                # Let any stale menu close and the page re-stabilize
+                try:
+                    self.page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                self.page.wait_for_timeout(1500)
+        # Out of attempts — surface the original error
+        raise last_err
 
     def login(self):
         """Full login flow: navigate, fill credentials, click login, wait for dashboard."""
