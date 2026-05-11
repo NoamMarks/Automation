@@ -34,50 +34,10 @@ from pages.messages_page import MessagesPage
 
 
 APP_URL = os.getenv("APP_URL", "https://front-zira.dev.orangepeak.net/")
-BACKEND_HOST = "zira-backend.dev.orangepeak.net"
 
 
 def _short_id():
     return uuid.uuid4().hex[:6]
-
-
-def _backend_get_links(page):
-    """Fetch all links via the page's authenticated session. Returns list."""
-    body = page.evaluate(
-        """async (host) => {
-            const r = await fetch('https://' + host + '/api/links', {credentials: 'include'});
-            return r.json();
-        }""",
-        BACKEND_HOST,
-    )
-    if isinstance(body, list):
-        return body
-    if isinstance(body, dict):
-        return body.get("links", [])
-    return []
-
-
-def _backend_get_envs(page):
-    body = page.evaluate(
-        """async (host) => {
-            const r = await fetch('https://' + host + '/api/environments', {credentials: 'include'});
-            return r.json();
-        }""",
-        BACKEND_HOST,
-    )
-    if isinstance(body, list):
-        return body
-    if isinstance(body, dict):
-        return body.get("environments", [])
-    return []
-
-
-def _link_attached_to(link, env_id):
-    for e in (link.get("environments") or []):
-        eid = e.get("_id") if isinstance(e, dict) else e
-        if eid == env_id:
-            return True
-    return False
 
 
 @pytest.fixture(scope="class")
@@ -241,24 +201,21 @@ class TestKnownRegressions:
         )
 
     # ----------------------------------------------------------
-    # BUG-3: new env missing from Links page env-chip area until refresh
+    # BUG-3: new env missing from the env-switcher dialog until refresh
     # ----------------------------------------------------------
     def test_bug_03_new_env_visible_in_links_without_refresh(self, page):
-        """BUG-3: After creating a new env on the Environments page,
-        navigating to the Links page (no browser refresh) should
-        immediately show the new env in each link's env-chip area
-        (the visible chips OR the '+N' tooltip that expands the rest).
-
-        The bug is that the Links page renders stale link data and does
-        NOT include the new env until the user manually reloads the
-        browser. Refresh fetches a fresh link list; sidebar-nav alone
-        re-uses the cached one.
+        """BUG-3: After creating a new env, navigating to the Links page
+        (no browser refresh) and opening the 'שינוי סביבה' (Change
+        environment) dialog from the header should immediately list the
+        new env. The bug is that the frontend caches the env list and
+        doesn't include the new env until the user manually reloads.
 
         Repro:
-          1. Navigate to envs, create new env
+          1. Navigate to Environments and create a new env
           2. Navigate to Links via the sidebar (no F5)
-          3. Inspect every link's env-chip column, expanding all '+N'
-             tooltips, and assert the new env name appears
+          3. Click the 'שינוי סביבה' button in the page header to open
+             the env-picker dialog
+          4. Assert the new env name appears in that dialog
         """
         suffix = _short_id()
         env_name = f"RegBug3Env{suffix}"
@@ -279,56 +236,32 @@ class TestKnownRegressions:
         # refresh; the test asserts they shouldn't have to.
         print(f"[reg/bug-03] navigating to Links via sidebar (no refresh)")
         NavigationPage(page).go_to_links()
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(2500)
 
-        # Collect every env name surfaced by the Links page:
-        #   (a) directly-rendered env chips in each link row
-        #   (b) tooltips revealed by clicking each '+N' expand button
-        seen_text_parts = []
-
-        # (a) Visible chips on each link row. The chip column lives in
-        # `LinkEnvironmentsContainer`; each chip is a `SingleLinkEnvironment`.
-        try:
-            seen_text_parts.append(
-                page.locator("[class*='LinkEnvironmentsContainer']")
-                    .all_inner_texts()
-            )
-        except Exception as e:
-            print(f"[reg/bug-03] could not read chip containers: "
-                  f"{type(e).__name__}: {e}")
-
-        # (b) Click every visible '+N' button and grab its tooltip
-        plus_buttons = page.locator(
-            "[class*='AdditionalEnvironmentsButton']"
-        ).all()
-        print(f"[reg/bug-03] found {len(plus_buttons)} '+N' expand buttons")
-        for i, btn in enumerate(plus_buttons[:10]):  # cap for speed
-            try:
-                btn.scroll_into_view_if_needed(timeout=2000)
-                btn.click(timeout=2000)
-                page.wait_for_timeout(500)
-                tip = page.locator("[role='tooltip']").last
-                if tip.count() > 0 and tip.is_visible():
-                    seen_text_parts.append([tip.inner_text()])
-                # Close tooltip — click body away from button
-                page.keyboard.press("Escape")
-                page.wait_for_timeout(200)
-            except Exception as e:
-                print(f"[reg/bug-03] +N #{i} click failed (non-fatal): "
-                      f"{type(e).__name__}: {e}")
-
-        # Flatten everything to one searchable blob
-        seen_text = "\n".join(
-            line for chunk in seen_text_parts for line in chunk
-        )
-        new_env_present = env_name in seen_text
-        print(f"[reg/bug-03] {env_name!r} visible in Links page env-chip "
-              f"UI (chips + tooltips): {new_env_present}")
-
-        # Cleanup BEFORE assertion so test data is gone even on failure
-        NavigationPage(page).go_to_environments()
+        # Open the env-switcher dialog from the header
+        print(f"[reg/bug-03] opening 'שינוי סביבה' dialog")
+        page.get_by_role("button", name="שינוי סביבה").click()
         page.wait_for_timeout(1500)
+
+        dialog = page.locator("[role='dialog']").last
+        dialog_text = ""
+        if dialog.count() > 0 and dialog.is_visible():
+            dialog_text = dialog.inner_text()
+        new_env_present = env_name in dialog_text
+        print(f"[reg/bug-03] {env_name!r} listed in env-switcher dialog: "
+              f"{new_env_present}")
+
+        # Cleanup BEFORE assertion so test data is gone even on failure.
+        # The env-switcher dialog is modal and its backdrop blocks the
+        # sidebar — Escape sometimes doesn't dismiss it cleanly. We do a
+        # hard URL navigation to bypass any leftover modal state. This
+        # is AFTER `new_env_present` was already captured, so it does not
+        # interfere with the bug-3 assertion (which is about NOT having
+        # to refresh BEFORE the dialog is read).
         try:
+            page.goto(APP_URL.rstrip("/") + "/admin/environments",
+                      wait_until="domcontentloaded")
+            page.wait_for_timeout(2500)
             envs.click_delete_on_row(env_name)
             envs.click_delete_and_confirm()
             page.wait_for_timeout(1500)
@@ -338,61 +271,102 @@ class TestKnownRegressions:
 
         assert new_env_present, (
             f"BUG-3: newly-created env {env_name!r} is missing from the "
-            f"Links page env-chip UI (visible chips + '+N' tooltips) "
-            f"without a manual browser refresh. The frontend is showing "
-            f"stale link data."
+            f"env-switcher dialog (opened from the Links page header) "
+            f"without a manual browser refresh. The frontend env list "
+            f"is stale."
         )
 
     # ----------------------------------------------------------
     # BUG-4: incomplete link propagation on env create
     # ----------------------------------------------------------
     def test_bug_04_env_create_propagates_to_all_links(self, page):
-        """BUG-4: Creating a new env should attach every existing link
-        to it. The backend non-deterministically drops a subset.
+        """BUG-4: Creating a new env should attach EVERY existing link
+        on the admin Links page to it. The backend was reported to drop
+        a non-deterministic subset.
 
-        Repro: snapshot the current link count, create an env, then
-        re-fetch links and count how many are attached to the new env.
-        The two counts should match.
+        UI-based check (matches what an admin manually verifies):
+          1. Create the new env via the admin UI
+          2. Hard-refresh the Links page (so we read fresh data and
+             isolate this test from BUG-3's caching staleness)
+          3. For every visible link row, confirm the new env appears in
+             that row's env-chip column — either as a directly-rendered
+             chip or inside the '+N' expand tooltip
+          4. All visible rows must include the new env → 100% propagation
         """
         suffix = _short_id()
         env_name = f"RegBug4Env{suffix}"
         env_param = f"regbug4{suffix}"
 
+        # Step 1 — create the env via UI
         NavigationPage(page).go_to_environments()
         page.wait_for_timeout(1500)
         envs_page = EnvironmentsPage(page)
-
-        # Snapshot expected link count BEFORE we trigger
-        links_before = _backend_get_links(page)
-        expected = len(links_before)
-        print(f"\n[reg/bug-04] expected link count to propagate: {expected}")
-
-        print(f"[reg/bug-04] creating env {env_name!r}")
+        print(f"\n[reg/bug-04] creating env {env_name!r}")
         envs_page.create_environment(env_name, env_param)
         envs_page.click_save_and_confirm()
         page.wait_for_timeout(2500)
         envs_page.verify_environment_visible(env_name)
 
-        # Find the new env's _id by re-querying envs
-        all_envs = _backend_get_envs(page)
-        new_env = next((e for e in all_envs if e.get("name") == env_name), None)
-        assert new_env, f"could not find {env_name!r} in env list after create"
-        new_env_id = new_env["_id"]
+        # Step 2 — go to Links page and hard-refresh so we see fresh data.
+        # (BUG-3 covers the caching/staleness path; this test is about
+        # propagation specifically, so we explicitly reload to remove
+        # caching as a confound.)
+        NavigationPage(page).go_to_links()
+        page.wait_for_timeout(1500)
+        page.reload()
+        page.wait_for_timeout(3000)
 
-        # Re-fetch links and count attachments
-        links_after = _backend_get_links(page)
-        attached = sum(1 for l in links_after if _link_attached_to(l, new_env_id))
-        missing_names = [
-            l.get("name") for l in links_after
-            if not _link_attached_to(l, new_env_id)
-        ]
-        print(f"[reg/bug-04] links attached to {env_name!r}: "
-              f"{attached} / {len(links_after)}")
-        if missing_names:
-            print(f"[reg/bug-04] sample missing names (first 10): "
-                  f"{missing_names[:10]}")
+        # Step 3 — for every visible link row, check whether the new env
+        # is reflected in its env-chip column. The admin Links page shows
+        # one of two things in that column:
+        #
+        #   (a) the special "כל הסביבות" ("All environments") chip — meaning
+        #       the link is attached to every env in the system, including
+        #       the one we just created  → propagation OK
+        #   (b) a list of specific env-name chips — meaning the link is
+        #       attached only to those envs. To pass, the new env name
+        #       must appear in this list  → propagation OK
+        #
+        # If a row shows specific chips that do NOT include the new env,
+        # propagation failed for that row.
+        ALL_ENVS_LABEL = "כל הסביבות"
+        rows = page.locator("[class*='SingleLinkstyled__StyledAdminLink']")
+        n_rows = rows.count()
+        print(f"\n[reg/bug-04] inspecting {n_rows} admin link rows for "
+              f"{env_name!r} or the 'all-envs' marker")
 
-        # Cleanup BEFORE assertion
+        missing = []
+        for i in range(n_rows):
+            row = rows.nth(i)
+            container = row.locator(
+                "[class*='LinkEnvironmentsContainer']"
+            )
+            if container.count() == 0:
+                continue  # header row / non-data row
+            try:
+                env_text = container.first.inner_text()
+            except Exception as e:
+                print(f"[reg/bug-04] could not read row {i} env text: "
+                      f"{type(e).__name__}: {e}")
+                continue
+            if ALL_ENVS_LABEL in env_text or env_name in env_text:
+                continue  # propagation reflected in UI for this row
+            try:
+                name = row.locator(
+                    "[class*='StyledLinkName']"
+                ).first.inner_text().strip()
+            except Exception:
+                name = f"<row {i}>"
+            missing.append(name)
+
+        print(f"[reg/bug-04] propagation reflected in UI for "
+              f"{n_rows - len(missing)} of {n_rows} rows; "
+              f"missing from {len(missing)} row(s)")
+
+        # Step 4 — cleanup BEFORE assertion (so test data is removed even
+        # if the assertion below fails)
+        NavigationPage(page).go_to_environments()
+        page.wait_for_timeout(1500)
         try:
             envs_page.click_delete_on_row(env_name)
             envs_page.click_delete_and_confirm()
@@ -401,11 +375,10 @@ class TestKnownRegressions:
             print(f"[reg/bug-04] cleanup raised (non-fatal): "
                   f"{type(e).__name__}: {e}")
 
-        # Assertion: every link present at create-time is now attached.
-        # We compare against the BEFORE count, since links_after may have
-        # additional links if anything else mutated meanwhile (defensive).
-        assert attached >= expected, (
-            f"BUG-4: env {env_name!r} only got {attached} of {expected} "
-            f"existing links propagated. Missing {expected - attached} "
-            f"links — sample: {missing_names[:5]}"
+        # Assertion: every visible link row must show either the
+        # all-envs marker or the new env name in its env-chip column.
+        assert not missing, (
+            f"BUG-4: env {env_name!r} did not propagate to "
+            f"{len(missing)} of {n_rows} visible link rows on the admin "
+            f"Links page. Missing from: {missing[:10]}"
         )

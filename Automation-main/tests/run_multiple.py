@@ -64,7 +64,12 @@ TEST_PATH = os.getenv("TEST_PATH", "./tests/")
 #   ["-k", "smoke"]                  → only tests whose nodeid matches 'smoke'
 #   ["--reruns", "2"]                → retry failed tests up to 2× per run
 #   ["-x"]                           → stop on first failure
-EXTRA_PYTEST_ARGS = []
+# Override at runtime: set the PYTEST_EXTRA_ARGS env var (shell-quoted).
+#   Example (include the @stress-marked tests in this run):
+#     PYTEST_EXTRA_ARGS='-m "stress or not stress"' python tests/run_multiple.py
+import shlex  # noqa: E402
+_extra_args_env = os.getenv("PYTEST_EXTRA_ARGS", "").strip()
+EXTRA_PYTEST_ARGS = shlex.split(_extra_args_env) if _extra_args_env else []
 
 
 # ============================================================

@@ -80,7 +80,7 @@ def _auth_state_path(tmp_path_factory):
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(
-                headless=headless, slow_mo=100 if headless else 300
+                headless=headless, slow_mo=300 if headless else 500
             )
             context = browser.new_context()
             page = context.new_page()

@@ -40,8 +40,8 @@ FEATURE_AREAS = {
         "explanation": "When you close a form without saving (X button or Cancel), the system must not accidentally save or delete data. Also covers the delete-confirmation dialog.",
     },
     "TestDomainLinkCascade": {
-        "title": "Domain → Link cascade behavior",
-        "explanation": "By design, when a domain is deleted the links attached to it are silently removed (this is the spec). This test verifies the silent-cascade behavior matches the spec.",
+        "title": "Domain → Link delete protection",
+        "explanation": "By design, deleting a domain is BLOCKED when at least one link has only that domain attached (would orphan the link). The admin must reattach those links to other domains, or delete them, before the domain can be removed. This test verifies the BLOCK protection.",
     },
     "TestEndUserFlows": {
         "title": "End-user (visitor) journeys on the public site",

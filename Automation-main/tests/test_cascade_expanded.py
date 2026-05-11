@@ -100,11 +100,14 @@ CASCADE_WARNING_KEYWORDS = (
 
 
 class TestDomainLinkCascade:
-    """Asserts the spec'd silent CASCADE behavior: deleting a Domain wipes
-    its dependent Links *without* a warning dialog about the cascade.
+    """Asserts the spec'd BLOCK protection: deleting a Domain is rejected
+    when at least one link has ONLY that domain attached (i.e. the link
+    would be orphaned if the domain were removed).
 
-    Standard 'are you sure?' confirmation is allowed — what is NOT allowed
-    is any text alerting the admin that linked entities will also be wiped.
+    The protection prevents accidental data loss — admins can't kill a
+    domain out from under links that have no other home. To delete the
+    domain, the admin must first reattach those links to other domains
+    or delete them.
     """
 
     def test_01_login(self, page):
@@ -143,12 +146,12 @@ class TestDomainLinkCascade:
         links.verify_link_visible(link_name)
         domain_link_data["link_name"] = link_name
 
-    def test_04_delete_domain_asserts_silent_cascade(self, page, domain_link_data):
+    def test_04_delete_domain_blocked_when_link_orphaned(self, page, domain_link_data):
         domain_name = domain_link_data["domain_name"]
         link_name = domain_link_data["link_name"]
-        print(f"\n[dom-link] >>> deleting domain {domain_name!r} — expecting "
-              f"silent CASCADE (link {link_name!r} should also be wiped, "
-              f"with NO cascade-warning dialog)")
+        print(f"\n[dom-link] >>> attempting to delete domain {domain_name!r} — "
+              f"expecting BLOCK because link {link_name!r} has ONLY this "
+              f"domain attached and would be orphaned")
 
         NavigationPage(page).go_to_content_worlds()
         page.wait_for_timeout(1000)
@@ -156,17 +159,19 @@ class TestDomainLinkCascade:
         try:
             domains.click_delete_on_row(domain_name)
         except Exception as e:
-            print(f"[dom-link] couldn't click delete on row: {type(e).__name__}: {e}")
+            print(f"[dom-link] couldn't click delete on row: "
+                  f"{type(e).__name__}: {e}")
 
-        # Capture the confirm dialog text BEFORE clicking through, so we can
-        # verify the 'silent' part of the contract.
+        # Capture any dialog text — the BLOCK message should explain the
+        # protection (links would be orphaned). Standard confirm dialog
+        # is also acceptable.
         page.wait_for_timeout(1000)
         dialog_text = ""
         dialog = page.locator(".MuiDialog-root, .MuiModal-root").first
         try:
             if dialog.count() > 0 and dialog.is_visible():
                 dialog_text = dialog.inner_text().strip()
-                print(f"[dom-link] confirm dialog text: "
+                print(f"[dom-link] dialog text: "
                       f"{dialog_text.replace(chr(10), ' | ')[:240]!r}")
         except Exception:
             pass
@@ -174,7 +179,7 @@ class TestDomainLinkCascade:
         _attempt_delete_via_modal(page, "dom-link")
         _capture_toasts(page, "dom-link")
 
-        # Re-navigate to refresh data and check final state
+        # Re-navigate to refresh + verify final state
         NavigationPage(page).go_to_content_worlds()
         page.wait_for_timeout(1500)
         domain_present = page.get_by_text(domain_name, exact=True).count() > 0
@@ -188,37 +193,50 @@ class TestDomainLinkCascade:
         print(f"[dom-link] link still present: {link_present}")
 
         # Classify outcome for the summary
-        if domain_present:
+        if domain_present and link_present:
             outcome = "BLOCK"
         elif link_present:
             outcome = "NULLIFY"
+        elif domain_present:
+            outcome = "PARTIAL"  # impossible per spec but record it
         else:
             outcome = "CASCADE"
         domain_link_data["outcome"] = outcome
         domain_link_data["dialog_text"] = dialog_text
         print(f"[dom-link] >>> OUTCOME: {outcome}")
 
-        # ----- Assert the spec'd contract -----
-        # 1) Both parent and child must be gone (CASCADE).
-        assert outcome == "CASCADE", (
-            f"Domain → Link contract violated: expected CASCADE "
-            f"(both deleted) but got {outcome} "
-            f"(domain_present={domain_present}, link_present={link_present})"
-        )
+        # Cleanup — since BLOCK was expected, both domain + link still
+        # exist. Detach the link from the domain first (or just delete
+        # the link), then delete the now-childless domain. Cleanup runs
+        # before the assertion so test data is removed even on failure.
+        try:
+            page.wait_for_timeout(500)
+            links = LinksPage(page)
+            links.delete_link(link_name)
+            links.click_delete_and_confirm()
+            page.wait_for_timeout(1500)
+            NavigationPage(page).go_to_content_worlds()
+            page.wait_for_timeout(1000)
+            domains.click_delete_on_row(domain_name)
+            _attempt_delete_via_modal(page, "dom-link/cleanup")
+            page.wait_for_timeout(1000)
+        except Exception as e:
+            print(f"[dom-link] cleanup raised (non-fatal): "
+                  f"{type(e).__name__}: {e}")
 
-        # 2) The confirmation dialog (if any) must NOT mention dependent
-        #    links — the cascade must be silent per spec. A standard
-        #    'are you sure you want to delete this content world?' dialog
-        #    is acceptable; a 'this will also delete N links' warning is not.
-        dialog_lower = dialog_text.lower()
-        offending = [w for w in CASCADE_WARNING_KEYWORDS if w.lower() in dialog_lower]
-        assert not offending, (
-            f"Domain → Link contract violated: cascade is supposed to be "
-            f"SILENT but the confirm dialog warned about cascading effects "
-            f"(matched keywords: {offending}). Dialog text: {dialog_text!r}"
+        # ----- Assert the spec'd contract -----
+        # The new spec: deleting a domain that would orphan a link is
+        # rejected. Both domain and link must remain in place.
+        assert outcome == "BLOCK", (
+            f"Domain → Link contract violated: expected BLOCK (delete "
+            f"rejected because link {link_name!r} has only this domain) "
+            f"but got {outcome} "
+            f"(domain_present={domain_present}, link_present={link_present}). "
+            f"Either the protection no longer fires or the test data was "
+            f"corrupted before the delete attempt."
         )
-        print(f"[dom-link] >>> CONTRACT PASS: silent CASCADE confirmed "
-              f"(no dependent-warning keywords in dialog)")
+        print(f"[dom-link] >>> CONTRACT PASS: BLOCK enforced — domain "
+              f"protected because link would be orphaned")
 
     def test_05_summary(self, domain_link_data):
         print("\n" + "=" * 60)

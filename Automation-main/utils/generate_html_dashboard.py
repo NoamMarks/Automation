@@ -290,136 +290,8 @@ def _hbar(label, value, total, color="#4caf50", width=320):
 # Main builder
 # ============================================================
 
-def generate_html_dashboard(runs, output_path):
-    """Build a self-contained HTML metrics dashboard. Returns the path."""
 
-    # Parse all runs
-    parsed = [(r, _parse_junit(r.get("junit_path"))) for r in runs]
-    valid_runs = [(r, d) for r, d in parsed if d is not None]
-
-    # Aggregate per-test outcomes
-    by_id = {}
-    classes = defaultdict(lambda: {"passes": 0, "fails": 0, "skips": 0, "ids": set()})
-    error_buckets = Counter()
-    duration_sum = defaultdict(float)
-    duration_count = defaultdict(int)
-
-    for run, data in valid_runs:
-        for tc in data["testcases"]:
-            tid = _short_id(tc["classname"], tc["name"])
-            cls = tc["classname"].split(".")[-1] or "<unknown>"
-            classes[cls]["ids"].add(tid)
-            entry = by_id.setdefault(tid, {
-                "cls": cls, "name": tc["name"],
-                "passes": 0, "fails": 0, "skips": 0,
-                "last_fail_msg": "",
-            })
-            duration_sum[tid] += tc["time"]
-            duration_count[tid] += 1
-            if tc["failed"]:
-                entry["fails"] += 1
-                classes[cls]["fails"] += 1
-                entry["last_fail_msg"] = tc["msg"]
-                error_buckets[_error_bucket(tc["msg"])] += 1
-            elif tc["skipped"]:
-                entry["skips"] += 1
-                classes[cls]["skips"] += 1
-            else:
-                entry["passes"] += 1
-                classes[cls]["passes"] += 1
-
-    # Final per-test bucketing
-    failed = [(tid, e) for tid, e in by_id.items() if e["fails"] > 0]
-    skipped = [(tid, e) for tid, e in by_id.items()
-               if e["fails"] == 0 and e["skips"] > 0]
-    passed = [(tid, e) for tid, e in by_id.items()
-              if e["fails"] == 0 and e["skips"] == 0]
-
-    total_unique = len(by_id)
-    n_runs = len(runs)
-    valid_run_count = len(valid_runs)
-    total_dur = sum((r["end"] - r["start"]).total_seconds() for r in runs)
-
-    # Test docstrings — used as hover-tooltip text on each test code cell
-    docstrings = _collect_test_docstrings()
-
-    def _tip_for(tid):
-        """Build the tooltip text for a given test ID."""
-        doc = docstrings.get(tid, "")
-        cls = tid.split("::")[0]
-        area = FEATURE_AREAS.get(cls, DEFAULT_AREA)
-        if doc:
-            return f"{doc}  ·  Area: {area['title']}"
-        return f"{area['title']}  ·  {area['explanation']}"
-
-    # Per-area summary
-    area_rows = []
-    for cls, c in classes.items():
-        tests = len(c["ids"])
-        # Per-test outcome (over all runs aggregated)
-        cls_pass = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] == 0)
-        cls_fail = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] > 0)
-        cls_skip = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] > 0)
-        title = FEATURE_AREAS.get(cls, DEFAULT_AREA)["title"]
-        area_rows.append((title, cls_pass, cls_fail, cls_skip, tests))
-    # Sort: most failures first, then by name
-    area_rows.sort(key=lambda r: (-r[2], -r[3], r[0]))
-
-    # Per-run trend rows
-    run_rows = []
-    for run, data in parsed:
-        if data is None:
-            run_rows.append({
-                "idx": run["run_idx"],
-                "started": run["start"].strftime("%H:%M:%S"),
-                "duration": _fmt_duration((run["end"] - run["start"]).total_seconds()),
-                "tests": "—", "passed": "—", "failed": "—", "skipped": "—",
-                "status": "no junit",
-            })
-            continue
-        p = data["tests"] - data["failures"] - data["errors"] - data["skipped"]
-        f = data["failures"] + data["errors"]
-        run_rows.append({
-            "idx": run["run_idx"],
-            "started": run["start"].strftime("%H:%M:%S"),
-            "duration": _fmt_duration(data["time"]),
-            "tests": data["tests"],
-            "passed": p,
-            "failed": f,
-            "skipped": data["skipped"],
-            "status": "ok" if f == 0 else "fail",
-        })
-
-    # Stability — tests with failures sorted by failure rate
-    stability = sorted(
-        ((tid, e) for tid, e in by_id.items() if e["fails"] > 0),
-        key=lambda x: (-x[1]["fails"], x[0]),
-    )
-
-    # Failure forensics — screenshots + console logs matched to run windows
-    artifacts = _collect_artifacts_for_runs(runs)
-
-    # Slowest tests — by average duration
-    slowest = sorted(
-        ((tid, duration_sum[tid] / max(1, duration_count[tid]))
-         for tid in by_id),
-        key=lambda x: -x[1],
-    )[:15]
-
-    # ============================================================
-    # HTML rendering
-    # ============================================================
-    pass_rate = 0 if total_unique == 0 else 100 * len(passed) / total_unique
-    overall_status_class = "ok" if not failed else "fail"
-    overall_status_text = (
-        "PIPELINE NOMINAL" if not failed
-        else f"DEGRADED — {len(failed)} FAILING"
-    )
-
-    css = """
+_CSS = """
         :root {
             --pass: #00e676;
             --fail: #ff3d6e;
@@ -750,6 +622,54 @@ def generate_html_dashboard(runs, output_path):
         }
         ::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.35); }
 
+        /* View tabs (per-run filter) */
+        .tab-bar {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 20px;
+            padding: 6px;
+            background: rgba(15, 22, 38, 0.65);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .tab {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--muted);
+            font-family: "JetBrains Mono", ui-monospace, monospace;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            padding: 8px 16px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background .2s, color .2s, border-color .2s;
+            white-space: nowrap;
+        }
+        .tab:hover {
+            color: var(--text);
+            background: rgba(0, 229, 255, 0.04);
+        }
+        .tab.tab-active {
+            background: rgba(0, 229, 255, 0.10);
+            border-color: rgba(0, 229, 255, 0.35);
+            color: var(--cyan);
+            box-shadow: 0 0 12px rgba(0, 229, 255, 0.20);
+        }
+        .tab .pill-mini {
+            display: inline-block;
+            margin-left: 6px;
+            padding: 1px 6px;
+            border-radius: 999px;
+            font-size: 9px;
+            background: rgba(255, 61, 110, 0.20);
+            color: var(--fail);
+            font-weight: 700;
+        }
+        .view[hidden] { display: none; }
+
         /* Hover tooltips for test rows */
         [data-tip] {
             cursor: help;
@@ -867,33 +787,136 @@ def generate_html_dashboard(runs, output_path):
             border-collapse: separate;
             border-spacing: 0;
         }
+"""
+
+
+def _build_view_html(runs_subset, tip_for):
+    """Render one view's content (status banner through full test grid).
+
+    Called once per view (aggregate + per-run). Returns a list of HTML strings.
+    All metrics (donut, KPIs, per-area bars, stability, forensics, etc.) reflect
+    only `runs_subset`. `tip_for` is a closure that returns tooltip text for
+    a given test ID (precomputed by the caller from test docstrings).
     """
+    parsed = [(r, _parse_junit(r.get("junit_path"))) for r in runs_subset]
+    valid_runs = [(r, d) for r, d in parsed if d is not None]
 
-    # ---------- HTML sections ----------
-    parts = []
-    parts.append("<!DOCTYPE html>")
-    parts.append("<html lang='en'><head>")
-    parts.append("<meta charset='utf-8'>")
-    parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
-    parts.append(f"<title>Test Dashboard — {datetime.now().strftime('%Y-%m-%d %H:%M')}</title>")
-    parts.append(f"<style>{css}</style>")
-    parts.append("</head><body><div class='container'>")
+    # Aggregate per-test outcomes
+    by_id = {}
+    classes = defaultdict(lambda: {"passes": 0, "fails": 0, "skips": 0, "ids": set()})
+    error_buckets = Counter()
+    duration_sum = defaultdict(float)
+    duration_count = defaultdict(int)
 
-    # Header
-    parts.append("<div class='topbar'><div>")
-    parts.append("<h1><span class='accent'>QA</span> · Test Pipeline Telemetry</h1>")
-    parts.append(
-        f"<div class='meta'>"
-        f"<span class='live-dot'></span>"
-        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        f"<span class='sep'>|</span>"
-        f"{n_runs} RUN{'S' if n_runs != 1 else ''}"
-        f"<span class='sep'>|</span>"
-        f"WALL-CLOCK {_fmt_duration(total_dur).upper()}"
-        f"<span class='sep'>|</span>"
-        f"{total_unique} TESTS"
-        f"</div></div></div>"
+    for run, data in valid_runs:
+        for tc in data["testcases"]:
+            tid = _short_id(tc["classname"], tc["name"])
+            cls = tc["classname"].split(".")[-1] or "<unknown>"
+            classes[cls]["ids"].add(tid)
+            entry = by_id.setdefault(tid, {
+                "cls": cls, "name": tc["name"],
+                "passes": 0, "fails": 0, "skips": 0,
+                "last_fail_msg": "",
+            })
+            duration_sum[tid] += tc["time"]
+            duration_count[tid] += 1
+            if tc["failed"]:
+                entry["fails"] += 1
+                classes[cls]["fails"] += 1
+                entry["last_fail_msg"] = tc["msg"]
+                error_buckets[_error_bucket(tc["msg"])] += 1
+            elif tc["skipped"]:
+                entry["skips"] += 1
+                classes[cls]["skips"] += 1
+            else:
+                entry["passes"] += 1
+                classes[cls]["passes"] += 1
+
+    # Final per-test bucketing
+    failed = [(tid, e) for tid, e in by_id.items() if e["fails"] > 0]
+    skipped = [(tid, e) for tid, e in by_id.items()
+               if e["fails"] == 0 and e["skips"] > 0]
+    passed = [(tid, e) for tid, e in by_id.items()
+              if e["fails"] == 0 and e["skips"] == 0]
+
+    total_unique = len(by_id)
+    n_runs = len(runs_subset)
+    valid_run_count = len(valid_runs)
+    total_dur = sum((r["end"] - r["start"]).total_seconds() for r in runs_subset)
+
+    # _tip_for is passed in by the caller (computed once per dashboard).
+    _tip_for = tip_for
+
+    # Per-area summary
+    area_rows = []
+    for cls, c in classes.items():
+        tests = len(c["ids"])
+        # Per-test outcome (over all runs aggregated)
+        cls_pass = sum(1 for tid, e in by_id.items()
+                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] == 0)
+        cls_fail = sum(1 for tid, e in by_id.items()
+                       if e["cls"] == cls and e["fails"] > 0)
+        cls_skip = sum(1 for tid, e in by_id.items()
+                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] > 0)
+        title = FEATURE_AREAS.get(cls, DEFAULT_AREA)["title"]
+        area_rows.append((title, cls_pass, cls_fail, cls_skip, tests))
+    # Sort: most failures first, then by name
+    area_rows.sort(key=lambda r: (-r[2], -r[3], r[0]))
+
+    # Per-run trend rows
+    run_rows = []
+    for run, data in parsed:
+        if data is None:
+            run_rows.append({
+                "idx": run["run_idx"],
+                "started": run["start"].strftime("%H:%M:%S"),
+                "duration": _fmt_duration((run["end"] - run["start"]).total_seconds()),
+                "tests": "—", "passed": "—", "failed": "—", "skipped": "—",
+                "status": "no junit",
+            })
+            continue
+        p = data["tests"] - data["failures"] - data["errors"] - data["skipped"]
+        f = data["failures"] + data["errors"]
+        run_rows.append({
+            "idx": run["run_idx"],
+            "started": run["start"].strftime("%H:%M:%S"),
+            "duration": _fmt_duration(data["time"]),
+            "tests": data["tests"],
+            "passed": p,
+            "failed": f,
+            "skipped": data["skipped"],
+            "status": "ok" if f == 0 else "fail",
+        })
+
+    # Stability — tests with failures sorted by failure rate
+    stability = sorted(
+        ((tid, e) for tid, e in by_id.items() if e["fails"] > 0),
+        key=lambda x: (-x[1]["fails"], x[0]),
     )
+
+    # Failure forensics — screenshots + console logs matched to run windows
+    artifacts = _collect_artifacts_for_runs(runs_subset)
+
+    # Slowest tests — by average duration
+    slowest = sorted(
+        ((tid, duration_sum[tid] / max(1, duration_count[tid]))
+         for tid in by_id),
+        key=lambda x: -x[1],
+    )[:15]
+
+    # ============================================================
+    # HTML rendering
+    # ============================================================
+    pass_rate = 0 if total_unique == 0 else 100 * len(passed) / total_unique
+    overall_status_class = "ok" if not failed else "fail"
+    overall_status_text = (
+        "PIPELINE NOMINAL" if not failed
+        else f"DEGRADED — {len(failed)} FAILING"
+    )
+
+
+    # ---------- HTML sections (returned as a list of strings) ----------
+    parts = []
 
     # Status banner
     parts.append(
@@ -964,29 +987,8 @@ def generate_html_dashboard(runs, output_path):
         parts.append(_hbar(title, p, p + f + s, color=color))
     parts.append("</div>")
 
-    # Per-run trend table
-    parts.append("<div class='card'>")
-    parts.append("<h2>Run telemetry · trend</h2>")
-    parts.append("<table>")
-    parts.append(
-        "<thead><tr><th>Run</th><th>Started</th><th>Duration</th>"
-        "<th class='num'>Tests</th><th class='num'>Passed</th>"
-        "<th class='num'>Failed</th><th class='num'>Skipped</th>"
-        "<th>Status</th></tr></thead><tbody>"
-    )
-    for r in run_rows:
-        pill = (f"<span class='pill {'pass' if r['status']=='ok' else 'fail'}'>"
-                f"{'PASS' if r['status']=='ok' else r['status'].upper()}</span>")
-        parts.append(
-            f"<tr><td>#{r['idx']}</td><td>{r['started']}</td>"
-            f"<td>{r['duration']}</td>"
-            f"<td class='num'>{r['tests']}</td>"
-            f"<td class='num'>{r['passed']}</td>"
-            f"<td class='num'>{r['failed']}</td>"
-            f"<td class='num'>{r['skipped']}</td>"
-            f"<td>{pill}</td></tr>"
-        )
-    parts.append("</tbody></table></div>")
+    # (Per-run trend table is rendered by generate_html_dashboard outside
+    # all views, since it always shows the full set of runs.)
 
     # Failure analysis (exception buckets)
     if error_buckets:
@@ -1112,6 +1114,179 @@ def generate_html_dashboard(runs, output_path):
             f"<td class='num'>{e['passes']} / {e['fails']} / {e['skips']}</td></tr>"
         )
     parts.append("</tbody></table></details></div>")
+
+    return parts
+
+
+# ============================================================
+# Outer orchestrator — head, header, trend table, tab bar, all views, JS
+# ============================================================
+
+_TAB_SWITCHER_JS = """
+(function () {
+    function activate(viewId) {
+        document.querySelectorAll('.tab').forEach(function (t) {
+            t.classList.toggle('tab-active', t.dataset.view === viewId);
+        });
+        document.querySelectorAll('.view').forEach(function (v) {
+            v.hidden = (v.dataset.view !== viewId);
+        });
+    }
+    document.querySelectorAll('.tab').forEach(function (t) {
+        t.addEventListener('click', function () { activate(t.dataset.view); });
+    });
+})();
+"""
+
+
+def _render_trend_table(runs):
+    """Per-run trend table — always shows ALL runs, sits outside views."""
+    parts = ["<div class='card'><h2>Run telemetry · trend</h2><table>"]
+    parts.append(
+        "<thead><tr><th>Run</th><th>Started</th><th>Duration</th>"
+        "<th class='num'>Tests</th><th class='num'>Passed</th>"
+        "<th class='num'>Failed</th><th class='num'>Skipped</th>"
+        "<th>Status</th></tr></thead><tbody>"
+    )
+    for run in runs:
+        data = _parse_junit(run.get("junit_path"))
+        if data is None:
+            wall = (run["end"] - run["start"]).total_seconds()
+            parts.append(
+                f"<tr><td>#{run['run_idx']}</td>"
+                f"<td>{run['start'].strftime('%H:%M:%S')}</td>"
+                f"<td>{_fmt_duration(wall)}</td>"
+                f"<td class='num'>—</td><td class='num'>—</td>"
+                f"<td class='num'>—</td><td class='num'>—</td>"
+                f"<td><span class='pill fail'>NO JUNIT</span></td></tr>"
+            )
+            continue
+        p = data["tests"] - data["failures"] - data["errors"] - data["skipped"]
+        f = data["failures"] + data["errors"]
+        pill_cls = "pass" if f == 0 else "fail"
+        pill_lbl = "PASS" if f == 0 else "FAIL"
+        parts.append(
+            f"<tr><td>#{run['run_idx']}</td>"
+            f"<td>{run['start'].strftime('%H:%M:%S')}</td>"
+            f"<td>{_fmt_duration(data['time'])}</td>"
+            f"<td class='num'>{data['tests']}</td>"
+            f"<td class='num'>{p}</td>"
+            f"<td class='num'>{f}</td>"
+            f"<td class='num'>{data['skipped']}</td>"
+            f"<td><span class='pill {pill_cls}'>{pill_lbl}</span></td></tr>"
+        )
+    parts.append("</tbody></table></div>")
+    return parts
+
+
+def _render_tab_bar(runs):
+    """Tab bar — one tab for 'All runs (aggregate)' + one tab per run.
+
+    Each tab has a `data-view` attribute that the JS uses to swap views.
+    Per-run tabs include a small red pill if that run had any failures.
+    """
+    parts = ["<div class='tab-bar'>"]
+    parts.append(
+        "<button class='tab tab-active' data-view='all'>All runs (aggregate)</button>"
+    )
+    for run in runs:
+        data = _parse_junit(run.get("junit_path"))
+        n_fail = (data["failures"] + data["errors"]) if data else 0
+        pill = (f"<span class='pill-mini'>{n_fail}</span>"
+                if n_fail > 0 else "")
+        parts.append(
+            f"<button class='tab' data-view='{run['run_idx']}'>"
+            f"Run {run['run_idx']}{pill}</button>"
+        )
+    parts.append("</div>")
+    return parts
+
+
+def generate_html_dashboard(runs, output_path):
+    """Build the full self-contained HTML dashboard.
+
+    Layout:
+        Header
+        Per-run trend table  (always full)
+        Tab bar              (All / Run 1 / Run 2 / …)
+        Aggregate view       (all runs)
+        Per-run views        (one per run, hidden by default)
+        Tab-switcher JS
+    """
+    # Compute docstrings + tooltip-text closure ONCE; share across views.
+    docstrings = _collect_test_docstrings()
+
+    def tip_for(tid):
+        doc = docstrings.get(tid, "")
+        cls = tid.split("::")[0]
+        area = FEATURE_AREAS.get(cls, DEFAULT_AREA)
+        if doc:
+            return f"{doc}  ·  Area: {area['title']}"
+        return f"{area['title']}  ·  {area['explanation']}"
+
+    # Header-strip metrics — always reflect the FULL set of runs
+    n_runs_total = len(runs)
+    total_dur_all = sum((r["end"] - r["start"]).total_seconds() for r in runs)
+    total_unique_all = set()
+    for run in runs:
+        data = _parse_junit(run.get("junit_path"))
+        if data is None:
+            continue
+        for tc in data["testcases"]:
+            total_unique_all.add(_short_id(tc["classname"], tc["name"]))
+
+    parts = []
+    parts.append("<!DOCTYPE html>")
+    parts.append("<html lang='en'><head>")
+    parts.append("<meta charset='utf-8'>")
+    parts.append("<meta name='viewport' content='width=device-width,initial-scale=1'>")
+    parts.append(
+        f"<title>Test Dashboard — {datetime.now().strftime('%Y-%m-%d %H:%M')}</title>"
+    )
+    parts.append(f"<style>{_CSS}</style>")
+    parts.append("</head><body><div class='container'>")
+
+    # Header
+    parts.append("<div class='topbar'><div>")
+    parts.append("<h1><span class='accent'>QA</span> · Test Pipeline Telemetry</h1>")
+    parts.append(
+        f"<div class='meta'>"
+        f"<span class='live-dot'></span>"
+        f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        f"<span class='sep'>|</span>"
+        f"{n_runs_total} RUN{'S' if n_runs_total != 1 else ''}"
+        f"<span class='sep'>|</span>"
+        f"WALL-CLOCK {_fmt_duration(total_dur_all).upper()}"
+        f"<span class='sep'>|</span>"
+        f"{len(total_unique_all)} TESTS"
+        f"</div></div></div>"
+    )
+
+    # Per-run trend table (always shows ALL runs)
+    parts.extend(_render_trend_table(runs))
+
+    # Tab bar (only render if there's more than 1 run; otherwise just the
+    # aggregate view since 'aggregate' == 'run 1' anyway)
+    if n_runs_total > 1:
+        parts.extend(_render_tab_bar(runs))
+
+    # Aggregate view ("all")
+    parts.append("<div class='view' data-view='all'>")
+    parts.extend(_build_view_html(runs, tip_for))
+    parts.append("</div>")
+
+    # Per-run views
+    if n_runs_total > 1:
+        for run in runs:
+            parts.append(
+                f"<div class='view' data-view='{run['run_idx']}' hidden>"
+            )
+            parts.extend(_build_view_html([run], tip_for))
+            parts.append("</div>")
+
+    # Tab-switcher JS
+    if n_runs_total > 1:
+        parts.append(f"<script>{_TAB_SWITCHER_JS}</script>")
 
     parts.append("</div></body></html>")
 
