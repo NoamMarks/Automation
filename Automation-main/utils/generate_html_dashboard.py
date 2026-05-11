@@ -622,6 +622,137 @@ _CSS = """
         }
         ::-webkit-scrollbar-thumb:hover { background: rgba(0, 229, 255, 0.35); }
 
+        /* ===== Mobile / tablet (≤ 768px) ===== */
+        @media (max-width: 768px) {
+            body { padding: 16px 12px 60px; }
+            h1 { font-size: 22px; }
+            .meta { font-size: 10px; }
+            .meta .sep { margin: 0 6px; }
+
+            /* KPI tiles stack 2-up on phones */
+            .grid.cols-3 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .grid.cols-2 { grid-template-columns: 1fr; }
+            .card { padding: 16px; }
+            .kpi { min-height: 80px; }
+            .kpi .value { font-size: 26px; }
+            .kpi .label { font-size: 10px; letter-spacing: 0.10em; }
+
+            /* Donut + legend stack vertically */
+            .donut-card { flex-direction: column; align-items: flex-start; gap: 12px; }
+
+            /* Status banner stacks; smaller text */
+            .status-banner {
+                flex-direction: column;
+                gap: 6px;
+                padding: 12px 16px;
+                font-size: 11px;
+                align-items: flex-start;
+            }
+
+            /* HBars: stack label / bar / value on three lines */
+            .hbar-row {
+                grid-template-columns: 1fr;
+                gap: 4px;
+                margin-bottom: 14px;
+            }
+            .hbar-track { width: 100% !important; }
+            .hbar-value { text-align: right; font-size: 11px; }
+
+            /* Tables: WRAP content instead of horizontal-scroll so all
+               columns stay visible on phones. Long test IDs break at
+               `::` / `_` / hyphens via word-break:break-word. */
+            table {
+                width: 100%;
+                table-layout: auto;
+                font-size: 11px;
+                white-space: normal;
+            }
+            th, td { padding: 6px 6px; vertical-align: top; }
+            th {
+                font-size: 9px;
+                letter-spacing: 0.06em;
+                white-space: nowrap;  /* headers stay one line */
+            }
+            td.num { white-space: nowrap; }  /* keep numeric columns intact */
+
+            /* The cyan test-ID badges can be long; let them wrap */
+            td code {
+                font-size: 10px;
+                padding: 1px 4px;
+                word-break: break-word;
+                overflow-wrap: anywhere;
+                display: inline-block;
+                max-width: 100%;
+                white-space: normal;
+            }
+
+            /* Stability index "last error" column — wrap pre */
+            .err-msg { white-space: pre-wrap; font-size: 10px; }
+
+            /* Forensics screenshots scale to viewport */
+            .forensic-block { padding: 12px; }
+            .forensic-block img { max-width: 100%; }
+            .forensic-block .console-log { font-size: 10px; padding: 10px; }
+            .forensic-block .err-headline { font-size: 10px; }
+
+            /* Tab bar: smaller pills, still horizontally scrollable */
+            .tab { padding: 6px 12px; font-size: 10px; }
+        }
+
+        /* ===== Small phones (≤ 480px — iPhone SE etc.) ===== */
+        @media (max-width: 480px) {
+            body { padding: 12px 8px 56px; }
+            h1 { font-size: 18px; }
+
+            /* KPI tiles single column — donut card already takes its own row */
+            .grid.cols-3 { grid-template-columns: 1fr 1fr; gap: 8px; }
+            .card { padding: 12px; }
+            .kpi { min-height: 70px; }
+            .kpi .value { font-size: 22px; }
+            .kpi .label { font-size: 9px; }
+
+            h2 { font-size: 11px; letter-spacing: 0.10em; }
+            .status-banner { font-size: 10px; letter-spacing: 0.10em; }
+
+            table { font-size: 10px; }
+            th, td { padding: 5px 4px; }
+            td code { font-size: 9px; padding: 1px 3px; }
+            .err-msg { font-size: 9px; }
+
+            .tab { padding: 5px 10px; font-size: 9px; }
+            .tab-bar { padding: 4px; gap: 2px; }
+        }
+
+        /* Touch devices — convert hover tooltips to tap-and-hold */
+        @media (hover: none) {
+            [data-tip]:hover::after,
+            [data-tip]:hover::before { display: none; }
+            [data-tip]:active::after {
+                content: attr(data-tip);
+                position: fixed;
+                left: 12px;
+                right: 12px;
+                bottom: 20px;
+                background: #0a1424;
+                border: 1px solid var(--border-strong);
+                border-radius: 4px;
+                padding: 12px 16px;
+                font-family: -apple-system, "Segoe UI", sans-serif;
+                font-size: 12px;
+                color: var(--text);
+                line-height: 1.5;
+                max-height: 50vh;
+                overflow-y: auto;
+                white-space: normal;
+                text-transform: none;
+                letter-spacing: normal;
+                font-weight: 400;
+                box-shadow: 0 4px 24px rgba(0,0,0,0.7);
+                z-index: 100;
+                pointer-events: none;
+            }
+        }
+
         /* View tabs (per-run filter) */
         .tab-bar {
             display: flex;

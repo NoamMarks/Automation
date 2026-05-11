@@ -45,6 +45,7 @@ load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 from utils.generate_master_report import generate_master_report  # noqa: E402
 from utils.generate_simple_summary import generate_simple_summary  # noqa: E402
 from utils.generate_html_dashboard import generate_html_dashboard  # noqa: E402
+from utils.generate_whatsapp_summary import generate_whatsapp_summary  # noqa: E402
 from utils.send_email import send_run_email  # noqa: E402
 
 
@@ -146,6 +147,7 @@ def main():
     master_path = os.path.join(MASTER_REPORTS_DIR, f"Master_Run_Report_{timestamp}.md")
     summary_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Summary_{timestamp}.md")
     dashboard_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Dashboard_{timestamp}.html")
+    whatsapp_path = os.path.join(MASTER_REPORTS_DIR, f"WhatsApp_Summary_{timestamp}.txt")
 
     print()
     print("=" * 72)
@@ -154,6 +156,7 @@ def main():
     written_master = generate_master_report(runs, master_path)
     written_summary = generate_simple_summary(runs, summary_path)
     written_dashboard = generate_html_dashboard(runs, dashboard_path)
+    written_whatsapp = generate_whatsapp_summary(runs, whatsapp_path)
 
     total_dur = (suite_end - suite_start).total_seconds()
     nonzero = sum(1 for r in runs if r["exit_code"] != 0)
@@ -163,8 +166,22 @@ def main():
     print(f"Plain summary:  {written_summary}  (start here — readable by anyone)")
     print(f"HTML dashboard: {written_dashboard}  (open in browser — charts + metrics)")
     print(f"Master report:  {written_master}  (deep diagnostics)")
+    print(f"WhatsApp text:  {written_whatsapp}  (copy-paste to chat)")
     if os.path.exists(written_master):
         print(f"   master size: {os.path.getsize(written_master):,} bytes")
+
+    # Echo the WhatsApp text to the terminal so it's instantly copy-pasteable
+    try:
+        with open(written_whatsapp, encoding="utf-8") as f:
+            wa_text = f.read()
+        print()
+        print("-" * 72)
+        print("WHATSAPP MESSAGE (copy below):")
+        print("-" * 72)
+        print(wa_text)
+        print("-" * 72)
+    except Exception as e:
+        print(f"[whatsapp] could not echo content: {type(e).__name__}: {e}")
 
     # ---- Post-run email (no-op unless EMAIL_FROM/PASS/TO are set in .env) ----
     print()
