@@ -1,0 +1,16 @@
+# Repo-root gitignore. The project's own .gitignore lives at
+# Automation-main/.gitignore and only covers paths under that subdir.
+# This file closes the gap for anything that lands at the repo root
+# (e.g. an accidentally-placed .env, like the one that was force-pushed
+# out on 2026-05-21).
+
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+auth_state.json
+
+# IDE / editor
+.vscode/
+.idea/
+.claude/settings.local.json
