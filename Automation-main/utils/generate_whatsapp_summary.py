@@ -54,8 +54,9 @@ def _fmt_dur(seconds):
 def generate_whatsapp_summary(runs, output_path, pdf_path=None):
     """Build the WhatsApp-shareable summary. Returns the path written.
 
-    `pdf_path` (optional): when provided, the message names the PDF so
-    the sender knows what to attach in the chat.
+    `pdf_path` kwarg is accepted for backward compatibility with callers
+    but ignored — the message text no longer references the PDF (the PDF
+    is attached to the WhatsApp chat manually by the sender).
     """
     parsed = [_parse_junit(r.get("junit_path")) for r in runs]
     valid = [d for d in parsed if d is not None]
@@ -82,15 +83,9 @@ def generate_whatsapp_summary(runs, output_path, pdf_path=None):
 
     if durations:
         lines.append("*זמני הרצה:* ")
-        lines.append(
-            f"ממוצע: {_fmt_dur(sum(durations) / len(durations))} | "
-            f"מקסימום: {_fmt_dur(max(durations))} | "
-            f"מינימום: {_fmt_dur(min(durations))}⏱️"
-        )
-        lines.append("")
-
-    if pdf_path:
-        lines.append(f"דוח מצורף: {os.path.basename(pdf_path)}")
+        lines.append(f"ממוצע: {_fmt_dur(sum(durations) / len(durations))}")
+        lines.append(f"מקסימום: {_fmt_dur(max(durations))}")
+        lines.append(f"מינימום: {_fmt_dur(min(durations))}")
         lines.append("")
 
     lines.append("לשאלות נוספות, צוות ה-QA זמין עבורכם👾")
