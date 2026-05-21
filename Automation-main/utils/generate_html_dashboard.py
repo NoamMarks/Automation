@@ -314,7 +314,18 @@ _CSS = """
             --grid-line: rgba(0, 229, 255, 0.06);
         }
         * { box-sizing: border-box; }
-        html, body { margin: 0; padding: 0; }
+        html, body {
+            margin: 0;
+            padding: 0;
+            /* Belt-and-braces: any single wide child would otherwise push
+               the whole page wider than the viewport on phones, making
+               every section look "outside the screen". */
+            overflow-x: hidden;
+            max-width: 100%;
+        }
+        /* Media defaults so SVGs (donut) and screenshots scale down on
+           phones instead of forcing a horizontal scroll. */
+        img, svg { max-width: 100%; height: auto; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
                          Roboto, Helvetica, Arial, sans-serif;
@@ -443,8 +454,8 @@ _CSS = """
         .kpi.fail .value { color: var(--fail); text-shadow: 0 0 12px rgba(255, 61, 110, 0.45); }
         .kpi.skip .value { color: var(--skip); text-shadow: 0 0 10px rgba(255, 179, 0, 0.40); }
         .kpi.duration .value { color: var(--cyan); text-shadow: 0 0 10px rgba(0, 229, 255, 0.40); }
-        .donut-card { display: flex; align-items: center; gap: 24px; }
-        .donut-card svg { flex-shrink: 0; }
+        .donut-card { display: flex; align-items: center; gap: 24px; flex-wrap: wrap; min-width: 0; }
+        .donut-card svg { flex-shrink: 1; max-width: 210px; height: auto; }
         .donut-legend { font-size: 13px; font-family: "JetBrains Mono", ui-monospace, monospace; }
         .donut-legend .swatch {
             display: inline-block; width: 10px; height: 10px;
@@ -487,13 +498,16 @@ _CSS = """
         }
         .hbar-row {
             display: grid;
-            grid-template-columns: 1fr 320px 140px;
+            /* minmax(0, ...) lets the fixed-pixel columns shrink if the
+               viewport can't fit 1fr + 320 + 140 + gaps. Without it, narrow
+               viewports overflow horizontally before the mobile breakpoint. */
+            grid-template-columns: minmax(0, 1fr) minmax(0, 320px) minmax(0, 140px);
             align-items: center;
             gap: 16px;
             margin-bottom: 10px;
             font-size: 13px;
         }
-        .hbar-label { color: var(--text); }
+        .hbar-label { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
         .hbar-track {
             background: rgba(255, 255, 255, 0.04);
             border: 1px solid rgba(255, 255, 255, 0.06);
@@ -501,6 +515,7 @@ _CSS = """
             border-radius: 2px;
             overflow: hidden;
             position: relative;
+            width: 100%;
         }
         .hbar-track::before {
             content: "";
@@ -654,12 +669,18 @@ _CSS = """
 
             /* HBars: stack label / bar / value on three lines */
             .hbar-row {
-                grid-template-columns: 1fr;
+                grid-template-columns: minmax(0, 1fr);
                 gap: 4px;
                 margin-bottom: 14px;
             }
-            .hbar-track { width: 100% !important; }
             .hbar-value { text-align: right; font-size: 11px; }
+
+            /* Grid/flex children with text need min-width:0 so the
+               container can shrink below content's intrinsic size. */
+            .card, .donut-card, .kpi { min-width: 0; }
+
+            /* Donut shrinks on small phones (was fixed 210px) */
+            .donut-card svg { max-width: 180px; }
 
             /* Tables: WRAP content instead of horizontal-scroll so all
                columns stay visible on phones. Long test IDs break at
@@ -698,8 +719,23 @@ _CSS = """
             .forensic-block .console-log { font-size: 10px; padding: 10px; }
             .forensic-block .err-headline { font-size: 10px; }
 
-            /* Tab bar: smaller pills, still horizontally scrollable */
-            .tab { padding: 6px 12px; font-size: 10px; }
+            /* Mobile tabs: keep tap targets at iOS HIG minimum (~44px)
+               but no special tricks — labels-bound-to-radios are natively
+               handled by every browser, so no JS event quirks to worry
+               about. iOS scroll-vs-tap is also a non-issue here because
+               the tap doesn't fire a click event in the JS sense; it
+               just checks the bound <input>. */
+            .tab {
+                padding: 10px 16px;
+                font-size: 11px;
+                min-height: 36px;
+                -webkit-tap-highlight-color: rgba(0, 229, 255, 0.35);
+                touch-action: manipulation;
+            }
+            .tab-bar {
+                -webkit-overflow-scrolling: touch;
+                position: relative;
+            }
         }
 
         /* ===== Small phones (≤ 480px — iPhone SE etc.) ===== */
@@ -781,7 +817,15 @@ _CSS = """
             cursor: pointer;
             transition: background .2s, color .2s, border-color .2s;
             white-space: nowrap;
+            user-select: none;
         }
+        .tab:hover {
+            color: var(--text);
+            background: rgba(0, 229, 255, 0.04);
+        }
+        /* The pill-mini sits inside the .tab label — make sure it never
+           captures the tap (so the click goes to the parent <label>). */
+        .tab .pill-mini { pointer-events: none; }
         .tab:hover {
             color: var(--text);
             background: rgba(0, 229, 255, 0.04);
@@ -924,13 +968,17 @@ _CSS = """
 """
 
 
-def _build_view_html(runs_subset, tip_for):
+def _build_view_html(runs_subset, tip_for, total_runs_dashboard=None):
     """Render one view's content (status banner through full test grid).
 
     Called once per view (aggregate + per-run). Returns a list of HTML strings.
     All metrics (donut, KPIs, per-area bars, stability, forensics, etc.) reflect
     only `runs_subset`. `tip_for` is a closure that returns tooltip text for
     a given test ID (precomputed by the caller from test docstrings).
+
+    `total_runs_dashboard` is the total number of runs in the whole dashboard
+    (not just this view) — used to label the view as "Aggregate of N runs"
+    versus "Run X only".
     """
     parsed = [(r, _parse_junit(r.get("junit_path"))) for r in runs_subset]
     valid_runs = [(r, d) for r, d in parsed if d is not None]
@@ -981,20 +1029,16 @@ def _build_view_html(runs_subset, tip_for):
     # _tip_for is passed in by the caller (computed once per dashboard).
     _tip_for = tip_for
 
-    # Per-area summary
+    # Per-area summary — execution-level counts so the bars in the
+    # aggregate view show actual execution health (e.g. 84/85 pass)
+    # rather than unique-test health (16/17). classes[cls]["passes"/
+    # "fails"/"skips"] are already execution-level (incremented per
+    # testcase in the loop above), so we use them directly.
     area_rows = []
     for cls, c in classes.items():
-        tests = len(c["ids"])
-        # Per-test outcome (over all runs aggregated)
-        cls_pass = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] == 0)
-        cls_fail = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] > 0)
-        cls_skip = sum(1 for tid, e in by_id.items()
-                       if e["cls"] == cls and e["fails"] == 0 and e["skips"] > 0)
         title = FEATURE_AREAS.get(cls, DEFAULT_AREA)["title"]
-        area_rows.append((title, cls_pass, cls_fail, cls_skip, tests))
-    # Sort: most failures first, then by name
+        area_rows.append((title, c["passes"], c["fails"], c["skips"], len(c["ids"])))
+    # Sort: most execution failures first, then by name
     area_rows.sort(key=lambda r: (-r[2], -r[3], r[0]))
 
     # Per-run trend rows
@@ -1041,58 +1085,82 @@ def _build_view_html(runs_subset, tip_for):
     # ============================================================
     # HTML rendering
     # ============================================================
-    pass_rate = 0 if total_unique == 0 else 100 * len(passed) / total_unique
-    overall_status_class = "ok" if not failed else "fail"
-    overall_status_text = (
-        "PIPELINE NOMINAL" if not failed
-        else f"DEGRADED — {len(failed)} FAILING"
-    )
+    # Execution-level counts (sum of per-test outcomes across all runs in
+    # this view). In aggregate, this is the number a manager expects to see
+    # — "we ran 570 tests, 547 passed". The unique-test counts (len(passed)
+    # etc.) only show up in the Stability index, which is the one section
+    # where "did this individual test ever fail" is the right question.
+    exec_passes = sum(e["passes"] for e in by_id.values())
+    exec_fails  = sum(e["fails"]  for e in by_id.values())
+    exec_skips  = sum(e["skips"]  for e in by_id.values())
+    total_executions = exec_passes + exec_fails + exec_skips
+    pass_rate = 0 if total_executions == 0 else 100 * exec_passes / total_executions
+
+    overall_status_class = "ok" if exec_fails == 0 else "fail"
+    if exec_fails == 0:
+        overall_status_text = "PIPELINE NOMINAL"
+    else:
+        # Both numbers matter: how many execution-failures happened, and
+        # how many distinct tests are flagging.
+        overall_status_text = (
+            f"DEGRADED — {exec_fails} EXECUTION FAILURE"
+            f"{'S' if exec_fails != 1 else ''} ACROSS {len(failed)} TEST"
+            f"{'S' if len(failed) != 1 else ''}"
+        )
 
 
     # ---------- HTML sections (returned as a list of strings) ----------
     parts = []
+    is_aggregate = (total_runs_dashboard is not None
+                    and n_runs > 1
+                    and n_runs == total_runs_dashboard)
 
-    # Status banner
+    # Status banner (execution-level counts)
     parts.append(
         f"<div class='status-banner {overall_status_class}'>"
         f"<span>&gt; {overall_status_text}</span>"
         f"<span class='secondary'>"
-        f"{len(passed)} pass &middot; {len(failed)} fail &middot; "
-        f"{len(skipped)} skip &middot; {pass_rate:.0f}% rate"
+        f"{exec_passes} pass &middot; {exec_fails} fail &middot; "
+        f"{exec_skips} skip &middot; {pass_rate:.0f}% rate"
         f"</span>"
         f"</div>"
     )
 
-    # KPI tiles + donut
+    # KPI tiles + donut — execution counts (so the aggregate of 5 runs
+    # shows 570, not 114). The "Total N executions" label clarifies that
+    # the donut is partitioning EXECUTIONS, not unique tests.
+    unit_label = "executions" if is_aggregate else "tests"
     parts.append("<div class='grid cols-3'>")
     parts.append(
         f"<div class='card donut-card'>"
-        f"<div>{_svg_donut(len(passed), len(failed), len(skipped))}</div>"
+        f"<div>{_svg_donut(exec_passes, exec_fails, exec_skips)}</div>"
         f"<div class='donut-legend'>"
         f"<div class='row'><span class='swatch' style='background:var(--pass);'></span>"
-        f"Passed: <strong>{len(passed)}</strong></div>"
+        f"Passed: <strong>{exec_passes}</strong></div>"
         f"<div class='row'><span class='swatch' style='background:var(--fail);'></span>"
-        f"Failed: <strong>{len(failed)}</strong></div>"
+        f"Failed: <strong>{exec_fails}</strong></div>"
         f"<div class='row'><span class='swatch' style='background:var(--skip);'></span>"
-        f"Skipped: <strong>{len(skipped)}</strong></div>"
+        f"Skipped: <strong>{exec_skips}</strong></div>"
         f"<div class='row' style='margin-top:10px;color:var(--muted);'>"
-        f"Total {total_unique} tests</div>"
+        f"Total {total_executions} {unit_label}"
+        + (f" · {total_unique} unique tests × {n_runs} runs" if is_aggregate else "")
+        + f"</div>"
         f"</div></div>"
     )
     parts.append(
         f"<div class='card kpi pass'>"
-        f"<div class='value'>{len(passed)}</div>"
-        f"<div class='label'>tests · pass</div></div>"
+        f"<div class='value'>{exec_passes}</div>"
+        f"<div class='label'>{unit_label} · pass</div></div>"
     )
     parts.append(
         f"<div class='card kpi fail'>"
-        f"<div class='value'>{len(failed)}</div>"
-        f"<div class='label'>tests · fail</div></div>"
+        f"<div class='value'>{exec_fails}</div>"
+        f"<div class='label'>{unit_label} · fail</div></div>"
     )
     parts.append(
         f"<div class='card kpi skip'>"
-        f"<div class='value'>{len(skipped)}</div>"
-        f"<div class='label'>tests · skip</div></div>"
+        f"<div class='value'>{exec_skips}</div>"
+        f"<div class='label'>{unit_label} · skip</div></div>"
     )
     parts.append(
         f"<div class='card kpi duration'>"
@@ -1256,21 +1324,12 @@ def _build_view_html(runs_subset, tip_for):
 # Outer orchestrator — head, header, trend table, tab bar, all views, JS
 # ============================================================
 
-_TAB_SWITCHER_JS = """
-(function () {
-    function activate(viewId) {
-        document.querySelectorAll('.tab').forEach(function (t) {
-            t.classList.toggle('tab-active', t.dataset.view === viewId);
-        });
-        document.querySelectorAll('.view').forEach(function (v) {
-            v.hidden = (v.dataset.view !== viewId);
-        });
-    }
-    document.querySelectorAll('.tab').forEach(function (t) {
-        t.addEventListener('click', function () { activate(t.dataset.view); });
-    });
-})();
-"""
+# CSS-only tab switching: hidden radio buttons + <label for=...> tabs.
+# Tapping a <label> natively checks the linked radio (browser DOM behavior,
+# no JS event listeners). The :checked ~ sibling selector then reveals the
+# matching view. Bulletproof on every browser since CSS3 (2010) — no
+# touch-event quirks, no overflow-x scroll-vs-tap conflicts.
+_TAB_SWITCHER_JS = ""  # kept for backward-compat with callers; no JS needed
 
 
 def _render_trend_table(runs):
@@ -1319,18 +1378,42 @@ def _render_tab_bar(runs):
     Each tab has a `data-view` attribute that the JS uses to swap views.
     Per-run tabs include a small red pill if that run had any failures.
     """
-    parts = ["<div class='tab-bar'>"]
-    parts.append(
-        "<button class='tab tab-active' data-view='all'>All runs (aggregate)</button>"
-    )
+    # Pre-compute the failure counts so labels can show them.
+    run_fail_counts = []
     for run in runs:
         data = _parse_junit(run.get("junit_path"))
         n_fail = (data["failures"] + data["errors"]) if data else 0
-        pill = (f"<span class='pill-mini'>{n_fail}</span>"
-                if n_fail > 0 else "")
+        run_fail_counts.append((run["run_idx"], n_fail))
+
+    # Hidden radio buttons — one per view. The `checked` on the first
+    # makes the aggregate view the default visible one. Tapping any
+    # <label for="view-rad-X"> elsewhere on the page checks the linked
+    # radio (native browser behavior, no JS), and the :checked ~ sibling
+    # CSS rules then reveal the corresponding view.
+    parts = []
+    parts.append(
+        "<input type='radio' name='view' id='view-rad-all' "
+        "class='view-radio' checked>"
+    )
+    for run_idx, _ in run_fail_counts:
         parts.append(
-            f"<button class='tab' data-view='{run['run_idx']}'>"
-            f"Run {run['run_idx']}{pill}</button>"
+            f"<input type='radio' name='view' id='view-rad-{run_idx}' "
+            f"class='view-radio'>"
+        )
+
+    # Tab bar: labels (not buttons or anchors). A <label for="..."> tap
+    # is the most natively-handled element in the web platform — every
+    # browser checks the linked radio via DOM, no event firing required.
+    parts.append("<div class='tab-bar'>")
+    parts.append(
+        "<label for='view-rad-all' class='tab' data-view='all'>"
+        "All runs (aggregate)</label>"
+    )
+    for run_idx, n_fail in run_fail_counts:
+        pill = (f"<span class='pill-mini'>{n_fail}</span>" if n_fail else "")
+        parts.append(
+            f"<label for='view-rad-{run_idx}' class='tab' "
+            f"data-view='{run_idx}'>Run {run_idx}{pill}</label>"
         )
     parts.append("</div>")
     return parts
@@ -1399,28 +1482,53 @@ def generate_html_dashboard(runs, output_path):
     # Per-run trend table (always shows ALL runs)
     parts.extend(_render_trend_table(runs))
 
-    # Tab bar (only render if there's more than 1 run; otherwise just the
-    # aggregate view since 'aggregate' == 'run 1' anyway)
+    # ---- CSS-only tab switcher ----
+    # Wrap radios + tab bar + all views in one .view-switcher container,
+    # then emit per-view CSS rules so :checked ~ .view[data-view=X] reveals
+    # the matching view. No JS — every tab tap is handled natively by the
+    # browser via <label for="...">.
     if n_runs_total > 1:
+        parts.append("<div class='view-switcher'>")
         parts.extend(_render_tab_bar(runs))
 
-    # Aggregate view ("all")
-    parts.append("<div class='view' data-view='all'>")
-    parts.extend(_build_view_html(runs, tip_for))
-    parts.append("</div>")
+        # Aggregate view
+        parts.append("<div class='view' data-view='all'>")
+        parts.extend(_build_view_html(runs, tip_for, total_runs_dashboard=n_runs_total))
+        parts.append("</div>")
 
-    # Per-run views
-    if n_runs_total > 1:
+        # Per-run views
         for run in runs:
-            parts.append(
-                f"<div class='view' data-view='{run['run_idx']}' hidden>"
-            )
-            parts.extend(_build_view_html([run], tip_for))
+            parts.append(f"<div class='view' data-view='{run['run_idx']}'>")
+            parts.extend(_build_view_html([run], tip_for, total_runs_dashboard=n_runs_total))
             parts.append("</div>")
 
-    # Tab-switcher JS
-    if n_runs_total > 1:
-        parts.append(f"<script>{_TAB_SWITCHER_JS}</script>")
+        # Per-view CSS rules — one set per radio. Hide all radios + all
+        # views by default, then reveal the view + style the label as
+        # active when its radio is :checked.
+        view_ids = ["all"] + [str(r["run_idx"]) for r in runs]
+        css_rules = [
+            ".view-switcher > .view-radio { display: none; }",
+            ".view-switcher > .view { display: none; }",
+        ]
+        for vid in view_ids:
+            css_rules.append(
+                f"#view-rad-{vid}:checked ~ .view[data-view='{vid}'] "
+                f"{{ display: block; }}"
+            )
+        for vid in view_ids:
+            css_rules.append(
+                f"#view-rad-{vid}:checked ~ .tab-bar label[for='view-rad-{vid}'] "
+                f"{{ background: rgba(0, 229, 255, 0.10); "
+                f"border-color: rgba(0, 229, 255, 0.35); color: var(--cyan); "
+                f"box-shadow: 0 0 12px rgba(0, 229, 255, 0.20); }}"
+            )
+        parts.append("<style>" + "\n".join(css_rules) + "</style>")
+        parts.append("</div>")  # close .view-switcher
+    else:
+        # Single-run dashboard — no switcher needed.
+        parts.append("<div class='view' data-view='all'>")
+        parts.extend(_build_view_html(runs, tip_for, total_runs_dashboard=n_runs_total))
+        parts.append("</div>")
 
     parts.append("</div></body></html>")
 

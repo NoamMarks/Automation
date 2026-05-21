@@ -30,7 +30,30 @@
       "Bash(python \"c:/tmp/zira_discovery/classify_links_by_status.py\")",
       "Bash(python \"c:/tmp/zira_discovery/dig_deeper.py\")",
       "Bash(tee \"c:/tmp/zira_discovery/_dig.log\")",
-      "Bash(tee \"c:/tmp/zira_discovery/_dig_recheck.log\")"
+      "Bash(tee \"c:/tmp/zira_discovery/_dig_recheck.log\")",
+      "Bash(python -c \"from utils.generate_html_dashboard import generate_html_dashboard, _hbar; print\\('import OK'\\); print\\(_hbar\\('TestCascade', 14, 16, '#00e676'\\)\\)\")",
+      "Bash(grep -B1 \"^\\\\.env$\")",
+      "Bash(git -C \"/c/Users/Admin/Automation\" status --short)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" diff --cached --stat)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" rm --cached .env -f)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" commit --amend --no-edit)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" show --stat HEAD)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" ls-tree --name-only HEAD)",
+      "Bash(grep -E \"^\\\\.env$\")",
+      "Bash(git -C \"/c/Users/Admin/Automation\" push --force-with-lease origin main)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" check-ignore -v .env)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" ls-files)",
+      "Bash(grep -E \"\\(^|/\\)\\\\.env$\")",
+      "Bash(git -C \"/c/Users/Admin/Automation\" log --oneline origin/main -3)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" check-ignore -v .env.production auth_state.json)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" add .gitignore)",
+      "Bash(git -C /c/Users/Admin/Automation commit -m ' *)",
+      "Bash(git -C \"/c/Users/Admin/Automation\" push origin main)",
+      "Bash(python -m pytest --collect-only -q)",
+      "Bash(cd \"/c/Users/Admin/Automation/Automation-main\" && python -m pytest --collect-only -q 2>&1 | grep \"^tests/\" > /tmp/test_ids.txt && wc -l /tmp/test_ids.txt)",
+      "Read(//tmp/**)",
+      "Bash(python _synth_run.py)",
+      "Bash(python -c ' *)"
     ]
   }
 }

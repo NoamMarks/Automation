@@ -46,6 +46,7 @@ from utils.generate_master_report import generate_master_report  # noqa: E402
 from utils.generate_simple_summary import generate_simple_summary  # noqa: E402
 from utils.generate_html_dashboard import generate_html_dashboard  # noqa: E402
 from utils.generate_whatsapp_summary import generate_whatsapp_summary  # noqa: E402
+from utils.dashboard_to_pdf import dashboard_html_to_pdf  # noqa: E402
 from utils.send_email import send_run_email  # noqa: E402
 
 
@@ -147,6 +148,7 @@ def main():
     master_path = os.path.join(MASTER_REPORTS_DIR, f"Master_Run_Report_{timestamp}.md")
     summary_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Summary_{timestamp}.md")
     dashboard_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Dashboard_{timestamp}.html")
+    dashboard_pdf_path = os.path.join(MASTER_REPORTS_DIR, f"Test_Dashboard_{timestamp}.pdf")
     whatsapp_path = os.path.join(MASTER_REPORTS_DIR, f"WhatsApp_Summary_{timestamp}.txt")
 
     print()
@@ -156,7 +158,24 @@ def main():
     written_master = generate_master_report(runs, master_path)
     written_summary = generate_simple_summary(runs, summary_path)
     written_dashboard = generate_html_dashboard(runs, dashboard_path)
-    written_whatsapp = generate_whatsapp_summary(runs, whatsapp_path)
+
+    # Render the HTML dashboard to PDF (headless Chromium via Playwright).
+    # The PDF is what gets attached to the WhatsApp message; the live HTML
+    # uses :checked tabs that don't make sense on paper. If PDF rendering
+    # fails for any reason, suite still completes — the PDF is a nice-to-
+    # have, not a hard requirement.
+    written_pdf = None
+    try:
+        written_pdf = dashboard_html_to_pdf(written_dashboard, dashboard_pdf_path)
+        print(f"[pdf] dashboard PDF written: {written_pdf} "
+              f"({os.path.getsize(written_pdf):,} bytes)")
+    except Exception as e:
+        print(f"[pdf] FAILED to generate dashboard PDF: "
+              f"{type(e).__name__}: {e}")
+
+    written_whatsapp = generate_whatsapp_summary(
+        runs, whatsapp_path, pdf_path=written_pdf
+    )
 
     total_dur = (suite_end - suite_start).total_seconds()
     nonzero = sum(1 for r in runs if r["exit_code"] != 0)
@@ -165,6 +184,8 @@ def main():
     print(f"Runs with non-zero exit code: {nonzero}/{len(runs)}")
     print(f"Plain summary:  {written_summary}  (start here — readable by anyone)")
     print(f"HTML dashboard: {written_dashboard}  (open in browser — charts + metrics)")
+    if written_pdf:
+        print(f"Dashboard PDF:  {written_pdf}  (attach to WhatsApp message)")
     print(f"Master report:  {written_master}  (deep diagnostics)")
     print(f"WhatsApp text:  {written_whatsapp}  (copy-paste to chat)")
     if os.path.exists(written_master):
@@ -188,6 +209,7 @@ def main():
     print("=" * 72)
     print("POST-RUN EMAIL")
     print("=" * 72)
+    # PDF is intentionally NOT emailed — it's a WhatsApp-channel artifact.
     send_run_email(
         runs,
         summary_path=written_summary,

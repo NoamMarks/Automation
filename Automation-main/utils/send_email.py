@@ -144,11 +144,16 @@ def _build_html_body(runs, agg, summary_path, dashboard_path):
 
 
 def send_run_email(runs, summary_path=None, dashboard_path=None,
-                   master_path=None):
+                   master_path=None, pdf_path=None):
     """Send a post-run email if EMAIL_FROM / EMAIL_PASS / EMAIL_TO are set.
 
     No-ops cleanly if creds aren't configured. Errors are caught + logged
     but never raised — running the suite never fails because of email.
+
+    Attaches the dashboard HTML and the plain-text summary. The dashboard
+    PDF is intentionally NOT emailed — it's meant for the WhatsApp channel
+    only. `pdf_path` kwarg is accepted for backward compatibility with
+    callers, but ignored here.
     """
     sender = os.getenv("EMAIL_FROM", "").strip()
     password = os.getenv("EMAIL_PASS", "").strip()
@@ -194,10 +199,11 @@ def send_run_email(runs, summary_path=None, dashboard_path=None,
         subtype="html",
     )
 
-    # Attachments — only the two the user asked for. The summary lives
-    # on disk as a Markdown file, but we attach it as .txt so it previews
-    # inline in mail clients (Gmail/Outlook don't preview .md). Content
-    # is unchanged — markdown is just plain text.
+    # Attachments. The summary lives on disk as a Markdown file, but we
+    # attach it as .txt so it previews inline in mail clients (Gmail/
+    # Outlook don't preview .md). Content is unchanged — markdown is
+    # just plain text. The PDF is intentionally not attached here —
+    # it's a WhatsApp-channel artifact.
     for path in (dashboard_path, summary_path):
         if not path or not os.path.exists(path):
             continue
