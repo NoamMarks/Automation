@@ -271,15 +271,18 @@ def _svg_donut(passed, failed, skipped, size=210, stroke=22):
     return "".join(parts)
 
 
-def _hbar(label, value, total, color="#4caf50", width=320):
-    """Horizontal bar with label on left, percent on right."""
+def _hbar(label, value, total, color="#4caf50"):
+    """Horizontal bar with label on left, percent on right.
+
+    Track width is driven by the .hbar-row CSS grid (responsive); fill is a
+    percentage of the track so it scales correctly at every viewport width.
+    """
     pct = 0 if total == 0 else 100 * value / total
-    bar_w = int(width * pct / 100)
     return (
         f'<div class="hbar-row">'
         f'<div class="hbar-label">{html.escape(label)}</div>'
-        f'<div class="hbar-track" style="width:{width}px;">'
-        f'<div class="hbar-fill" style="width:{bar_w}px;background:{color};"></div>'
+        f'<div class="hbar-track">'
+        f'<div class="hbar-fill" style="width:{pct:.1f}%;background:{color};"></div>'
         f'</div>'
         f'<div class="hbar-value">{value}/{total} ({pct:.0f}%)</div>'
         f'</div>'
