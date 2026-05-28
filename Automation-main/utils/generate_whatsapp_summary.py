@@ -76,7 +76,7 @@ def generate_whatsapp_summary(runs, output_path, pdf_path=None):
     lines.append("")
     lines.append(
         f"*הרצות:* {n_runs} איטרציות "
-        f"(סה\"כ {total_exec} ביצועי בדיקות)"
+        f"(סה\"כ {total_exec} בדיקות)"
     )
     lines.append(f"*אחוז הצלחה כללי:* {pass_rate:.1f}%📊")
     lines.append("")
