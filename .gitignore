@@ -14,3 +14,10 @@ auth_state.json
 .vscode/
 .idea/
 .claude/settings.local.json
+
+# Build artifacts (root-level strays from PyInstaller).
+# These exist only at build time — anyone with the source can rebuild
+# via Automation-main/build_exe.bat. They MUST stay out of git because
+# GitHub rejects single files >100 MB and the bundled .exe is ~320 MB.
+ZiraQARunner.exe
+*.spec

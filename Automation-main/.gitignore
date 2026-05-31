@@ -24,3 +24,18 @@ cascade_debug_link_form.png
 # session cookies for the admin user. Lives in pytest's tmp dir by
 # default, but pin a defensive ignore in case anyone redirects it here.
 auth_state.json
+
+# PyInstaller build outputs. `build/` is the working dir, `dist/` holds
+# the final .exe — both regenerable via build_exe.bat. The bundled .exe
+# is ~320 MB and GitHub rejects single files >100 MB, so keep them out
+# of git entirely.
+build/
+dist/
+*.spec
+ZiraQARunner.exe
+launcher_debug.log
+
+# Playwright browser binaries staged for PyInstaller bundling
+# (~550 MB of chromium variants). Re-downloaded by `playwright install`
+# on every clean build, so never belongs in git.
+pw-browsers/
